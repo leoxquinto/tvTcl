@@ -31,6 +31,9 @@ final class LineIcon extends Drawable {
     static final int[] PICTURE ={0, 30, 50, 1, 210, 50, 1, 210, 165, 1, 30, 165, 2, 0, 120, 165, 1, 120, 200,
             0, 80, 200, 1, 160, 200};
 
+    // Icon color; MainActivity sets it from the theme before it builds the icons.
+    static int tint = 0xEBFFFFFF;
+
     private final int[] ops;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
@@ -41,7 +44,7 @@ final class LineIcon extends Drawable {
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeJoin(Paint.Join.ROUND);
-        paint.setColor(0xEBFFFFFF);
+        paint.setColor(tint);
     }
 
     @Override

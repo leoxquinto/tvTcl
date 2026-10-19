@@ -55,6 +55,7 @@ import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
 import org.json.JSONObject;
 import java.text.SimpleDateFormat;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.Locale;
 import java.util.TimeZone;
@@ -108,6 +109,11 @@ public class MainActivity extends Activity {
     private static Typeface regular, semibold;
     private boolean darkTheme = true;
     private TextView weatherText;
+    private TextView greetingView, dateView, timeView;
+    private GradientDrawable weatherBgDrawable;
+    private final Runnable themeTick = new Runnable() {
+        @Override public void run() { applyAutoTheme(); weatherHandler.postDelayed(this, 60L * 1000L); }
+    };
     private TextClock clockDate, clockTime;
     private final Handler weatherHandler = new Handler(Looper.getMainLooper());
     private final Runnable weatherRefresh = new Runnable() {
@@ -147,6 +153,8 @@ public class MainActivity extends Activity {
         saveConfig(getIntent());
         loadFonts();
         scale = getResources().getDisplayMetrics().widthPixels / 1920f;
+        darkTheme = computeDark();
+        LineIcon.tint = darkTheme ? 0xEBFFFFFF : 0xE61C1C1E;
         getWindow().setBackgroundDrawable(background());
 
         ScrollView scroller = new ScrollView(this);
@@ -158,7 +166,8 @@ public class MainActivity extends Activity {
         root.setClipChildren(false);
         scroller.addView(root, new FrameLayout.LayoutParams(-1, -2));
 
-        TextView greeting = text(px(38), 0xFFF5F7FB, semibold);
+        TextView greeting = text(px(38), cMain(), semibold);
+        greetingView = greeting;
         greeting.setText("Bem-vindo, Leonardo!");
         greeting.setShadowLayer(px(12), 0, px(2), 0x44000000);
         root.addView(greeting, at(px(MARGIN), px(62), -2, -2));
@@ -166,8 +175,10 @@ public class MainActivity extends Activity {
         LinearLayout clock = new LinearLayout(this);
         clock.setOrientation(LinearLayout.VERTICAL);
         clock.setGravity(Gravity.END);
-        TextClock date = clock("EEEE, d MMMM", "EEEE, d MMMM", px(27), 0xD9FFFFFF, regular);
-        TextClock time = clock("h:mm", "H:mm", px(118), Color.WHITE, semibold);
+        TextClock date = clock("EEEE, d MMMM", "EEEE, d MMMM", px(27), cSecondary(), regular);
+        TextClock time = clock("h:mm", "H:mm", px(118), cMain(), semibold);
+        dateView = date;
+        timeView = time;
         time.setLetterSpacing(-0.028f);
         time.setFontFeatureSettings("tnum");
         time.setIncludeFontPadding(false);
@@ -181,16 +192,17 @@ public class MainActivity extends Activity {
         weatherCard.setPadding(px(28), px(22), px(28), px(22));
         GradientDrawable weatherBg = new GradientDrawable();
         weatherBg.setCornerRadius(px(28));
-        weatherBg.setColor(0x2AFFFFFF);
-        weatherBg.setStroke(Math.max(1, px(2)), 0x35FFFFFF);
+        weatherBgDrawable = weatherBg;
+        weatherBg.setColor(cardFill());
+        weatherBg.setStroke(Math.max(1, px(2)), cardStroke());
         weatherCard.setBackground(weatherBg);
-        weatherText = text(px(27), 0xFFF5F7FB, regular);
+        weatherText = text(px(27), cMain(), regular);
         weatherText.setText("São Paulo · Consultando o clima…");
         weatherText.setMaxLines(2);
         weatherCard.addView(weatherText);
         root.addView(weatherCard, at(px(MARGIN), px(142), px(660), px(142)));
 
-        moveHint = text(px(24), 0xA8FFFFFF, regular);
+        moveHint = text(px(24), cHint(), regular);
         moveHint.setText("Use the arrows to move it, then press OK");
         moveHint.setVisibility(View.GONE);
         root.addView(moveHint, at(px(MARGIN), px(ROW1_TOP - 64), -2, -2));
@@ -198,6 +210,7 @@ public class MainActivity extends Activity {
         setContentView(scroller);
         fetchWeather();
         weatherHandler.postDelayed(weatherRefresh, 30L * 60L * 1000L);
+        weatherHandler.postDelayed(themeTick, 60L * 1000L);
 
         IntentFilter f = new IntentFilter();
         f.addAction(Intent.ACTION_PACKAGE_ADDED);
@@ -216,6 +229,8 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        weatherHandler.removeCallbacks(themeTick);
+        weatherHandler.removeCallbacks(weatherRefresh);
         unregisterReceiver(packagesChanged);
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm != null) try { cm.unregisterNetworkCallback(networkChanged); } catch (Exception ignored) {}
@@ -294,15 +309,46 @@ public class MainActivity extends Activity {
     @Override
     public void onBackPressed() { /* home screen: nothing to go back to */ }
 
-    // Static warm gradient, drawn once by the window: no extra view, no animation.
+    // Apple TV style: true black at night, soft light gray by day. Drawn once by the window.
     private Drawable background() {
-        int[] colors = darkTheme ? new int[] {0xFF17202D, 0xFF0B101A, 0xFF070A10}
-                : new int[] {0xFFF3F6FA, 0xFFE5ECF4, 0xFFD8E3EF};
+        int[] colors = darkTheme ? new int[] {0xFF000000, 0xFF050506, 0xFF000000}
+                : new int[] {0xFFF5F5F7, 0xFFEAEAEE, 0xFFDEDEE4};
         GradientDrawable base = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors);
-        GradientDrawable glow = radial(darkTheme ? 0x354A86C5 : 0x5578A9D8, 0.08f, -0.12f, px(1250));
-        GradientDrawable plum = radial(darkTheme ? 0x2E7B65A8 : 0x227A9BC0, 1.0f, 1.1f, px(1000));
-        for (GradientDrawable g : new GradientDrawable[] {base, glow, plum}) g.setDither(true);
-        return new LayerDrawable(new Drawable[] {base, glow, plum});
+        GradientDrawable glow = radial(darkTheme ? 0x1FFFFFFF : 0x99FFFFFF, 0.08f, -0.12f, px(1250));
+        GradientDrawable tint = radial(darkTheme ? 0x1A2A3550 : 0x1A8D9BBA, 1.0f, 1.1f, px(1000));
+        for (GradientDrawable g : new GradientDrawable[] {base, glow, tint}) g.setDither(true);
+        return new LayerDrawable(new Drawable[] {base, glow, tint});
+    }
+
+    // Theme palette. Night is dark, day is light; see computeDark.
+    private int cMain() { return darkTheme ? 0xFFFFFFFF : 0xFF1C1C1E; }
+    private int cSecondary() { return darkTheme ? 0xB3FFFFFF : 0xFF5C5C63; }
+    private int cHint() { return darkTheme ? 0xA8FFFFFF : 0xFF6B6B73; }
+    private int cardFill() { return darkTheme ? 0x1FFFFFFF : 0xB3FFFFFF; }
+    private int cardStroke() { return darkTheme ? 0x24FFFFFF : 0x14000000; }
+    private int glassColor(boolean focused) {
+        if (darkTheme) return focused ? 0x40FFFFFF : 0x14FFFFFF;
+        return focused ? 0xFFFFFFFF : 0xB3FFFFFF;
+    }
+    private int focusCircle() { return darkTheme ? 0x38FFFFFF : 0x24000000; }
+
+    // Day or night from the cached sunrise and sunset (minutes of the day), so it works offline and
+    // right at start. Without a cache yet it assumes 6:00 to 18:00.
+    private boolean computeDark() {
+        SharedPreferences sp = getSharedPreferences(PREFS, 0);
+        int rise = sp.getInt("rise_min", 6 * 60), set = sp.getInt("set_min", 18 * 60);
+        Calendar c = Calendar.getInstance(TimeZone.getTimeZone("America/Sao_Paulo"));
+        int now = c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE);
+        return !(now >= rise && now < set);
+    }
+
+    private void applyAutoTheme() {
+        if (movingKey != null) return; // don't rebuild the tiles in the middle of a move
+        boolean dark = computeDark();
+        if (dark == darkTheme) return;
+        darkTheme = dark;
+        getWindow().setBackgroundDrawable(background());
+        updateThemeColors();
     }
 
     private void fetchWeather() {
@@ -324,21 +370,15 @@ public class MainActivity extends Activity {
                 JSONObject daily = json.getJSONObject("daily");
                 String rise = daily.getJSONArray("sunrise").getString(0);
                 String set = daily.getJSONArray("sunset").getString(0);
-                SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm", Locale.US);
-                f.setTimeZone(TimeZone.getTimeZone("America/Sao_Paulo"));
-                Date now = new Date();
-                boolean daytime = now.after(f.parse(rise)) && now.before(f.parse(set));
+                int riseMin = Integer.parseInt(rise.substring(11, 13)) * 60 + Integer.parseInt(rise.substring(14, 16));
+                int setMin = Integer.parseInt(set.substring(11, 13)) * 60 + Integer.parseInt(set.substring(14, 16));
+                getSharedPreferences(PREFS, 0).edit().putInt("rise_min", riseMin).putInt("set_min", setMin).apply();
                 String condition = weatherDescription(code);
                 runOnUiThread(() -> {
                     if (weatherText != null) weatherText.setText(String.format(Locale.forLanguageTag("pt-BR"),
                             "☀  %.0f°  ·  São Paulo, SP\n%s  ·  Nascer %s  /  Pôr %s",
                             temp, condition, rise.substring(11,16), set.substring(11,16)));
-                    boolean newDark = !daytime;
-                    if (darkTheme != newDark) {
-                        darkTheme = newDark;
-                        getWindow().setBackgroundDrawable(background());
-                        updateThemeColors();
-                    }
+                    applyAutoTheme();
                 });
             } catch (Exception ignored) {
                 runOnUiThread(() -> { if (weatherText != null && weatherText.getText().toString().contains("Consultando"))
@@ -360,15 +400,16 @@ public class MainActivity extends Activity {
     }
 
     private void updateThemeColors() {
-        int main = darkTheme ? Color.WHITE : 0xFF17202D;
-        int secondary = darkTheme ? 0xD9FFFFFF : 0xFF46556A;
-        for (int i = 0; i < root.getChildCount(); i++) {
-            View v = root.getChildAt(i);
-            if (v instanceof TextView) ((TextView) v).setTextColor(secondary);
+        LineIcon.tint = darkTheme ? 0xEBFFFFFF : 0xE61C1C1E;
+        if (greetingView != null) greetingView.setTextColor(cMain());
+        if (dateView != null) dateView.setTextColor(cSecondary());
+        if (timeView != null) timeView.setTextColor(cMain());
+        if (weatherText != null) weatherText.setTextColor(cMain());
+        if (moveHint != null) moveHint.setTextColor(cHint());
+        if (weatherBgDrawable != null) {
+            weatherBgDrawable.setColor(cardFill());
+            weatherBgDrawable.setStroke(Math.max(1, px(2)), cardStroke());
         }
-        if (root.getChildCount() > 0 && root.getChildAt(0) instanceof TextView)
-            ((TextView) root.getChildAt(0)).setTextColor(main);
-        if (weatherText != null) weatherText.setTextColor(main);
         buildTiles();
     }
 
@@ -477,8 +518,8 @@ public class MainActivity extends Activity {
             card.addView(iv, new FrameLayout.LayoutParams(-1, -1));
         } else {
             // Quiet "glass" tile: icon above label.
-            bg.setColor(0x13FFFFFF);
-            bg.setStroke(Math.max(1, px(2)), 0x17FFFFFF);
+            bg.setColor(glassColor(false));
+            bg.setStroke(Math.max(1, px(2)), cardStroke());
             LinearLayout inner = new LinearLayout(this);
             inner.setOrientation(LinearLayout.VERTICAL);
             inner.setGravity(Gravity.CENTER);
@@ -487,7 +528,7 @@ public class MainActivity extends Activity {
             if (lineIcon != null) iv.setImageDrawable(new LineIcon(lineIcon));
             else if (appIcon != null) iv.setImageDrawable(fit(appIcon, size, size));
             inner.addView(iv, new LinearLayout.LayoutParams(size, size));
-            TextView t = text(px(24), darkTheme ? 0xE0FFFFFF : 0xFF17202D, regular);
+            TextView t = text(px(24), cMain(), regular);
             t.setText(label);
             t.setSingleLine(true);
             t.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -504,7 +545,7 @@ public class MainActivity extends Activity {
         card.setTag(key);
 
         // Banner tiles show their name underneath when focused.
-        final TextView caption = banner == null ? null : text(px(24), Color.WHITE, regular);
+        final TextView caption = banner == null ? null : text(px(24), cMain(), regular);
         if (caption != null) {
             caption.setText(label);
             caption.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -514,7 +555,7 @@ public class MainActivity extends Activity {
         final boolean glass = banner == null;
         card.setOnFocusChangeListener((v, has) -> {
             if (has) focusedKey = key;
-            if (glass) bg.setColor(has ? (darkTheme ? 0x38FFFFFF : 0xFFE0EAF5) : (darkTheme ? 0x13FFFFFF : 0xBFFFFFFF));
+            if (glass) bg.setColor(glassColor(has));
             v.animate().scaleX(has ? 1.1f : 1f).scaleY(has ? 1.1f : 1f).translationZ(has ? px(26) : 0)
                     .setDuration(140).withLayer().start();
             if (caption != null) caption.setVisibility(has ? View.VISIBLE : View.INVISIBLE);
@@ -573,7 +614,7 @@ public class MainActivity extends Activity {
         card.setContentDescription(label);
         card.setOnFocusChangeListener((v, has) -> {
             if (has) focusedKey = key;
-            bg.setColor(has ? 0x38FFFFFF : Color.TRANSPARENT);
+            bg.setColor(has ? focusCircle() : Color.TRANSPARENT);
             v.animate().scaleX(has ? 1.1f : 1f).scaleY(has ? 1.1f : 1f).setDuration(140).withLayer().start();
         });
         card.setOnClickListener(v -> open(key));
