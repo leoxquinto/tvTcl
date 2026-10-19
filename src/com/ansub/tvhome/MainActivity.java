@@ -107,7 +107,8 @@ public class MainActivity extends Activity {
 
     private static Typeface regular, semibold;
     private boolean darkTheme = true;
-    private TextView weatherText;\n    private TextClock clockDate, clockTime;
+    private TextView weatherText;
+    private TextClock clockDate, clockTime;
     private final Handler weatherHandler = new Handler(Looper.getMainLooper());
     private final Runnable weatherRefresh = new Runnable() {
         @Override public void run() { fetchWeather(); weatherHandler.postDelayed(this, 30L * 60L * 1000L); }
@@ -330,7 +331,7 @@ public class MainActivity extends Activity {
                 String condition = weatherDescription(code);
                 runOnUiThread(() -> {
                     if (weatherText != null) weatherText.setText(String.format(Locale.forLanguageTag("pt-BR"),
-                            "☀  %.0f°  ·  São Paulo, SP\\n%s  ·  Nascer %s  /  Pôr %s",
+                            "☀  %.0f°  ·  São Paulo, SP\n%s  ·  Nascer %s  /  Pôr %s",
                             temp, condition, rise.substring(11,16), set.substring(11,16)));
                     boolean newDark = !daytime;
                     if (darkTheme != newDark) {
