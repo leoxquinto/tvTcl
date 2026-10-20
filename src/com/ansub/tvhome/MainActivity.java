@@ -196,9 +196,9 @@ public class MainActivity extends Activity {
         LinearLayout weatherCard = new LinearLayout(this);
         weatherCard.setOrientation(LinearLayout.VERTICAL);
         weatherCard.setGravity(Gravity.CENTER_VERTICAL);
-        weatherCard.setPadding(px(34), px(16), px(34), px(16));
+        weatherCard.setPadding(px(30), px(12), px(30), px(12));
         GradientDrawable weatherBg = new GradientDrawable();
-        weatherBg.setCornerRadius(px(48));
+        weatherBg.setCornerRadius(px(36));
         weatherBgDrawable = weatherBg;
         weatherBg.setColor(cardFill());
         weatherBg.setStroke(Math.max(1, px(2)), cardStroke());
@@ -207,9 +207,11 @@ public class MainActivity extends Activity {
         weatherText.setText("São Paulo · Consultando o clima…");
         weatherText.setMaxLines(2);
         weatherCard.addView(weatherText);
-        int pillW = px(700);
-        int pillX = Math.max(px(MARGIN), getResources().getDisplayMetrics().widthPixels - px(MARGIN) - pillW);
-        root.addView(weatherCard, at(pillX, px(176), pillW, px(116)));
+        // As wide as its text needs (so nothing gets cut), pinned to the right margin.
+        FrameLayout.LayoutParams pill = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
+        pill.topMargin = px(176);
+        pill.rightMargin = px(MARGIN);
+        root.addView(weatherCard, pill);
 
         moveHint = text(px(24), cHint(), regular);
         moveHint.setText("Use the arrows to move it, then press OK");
@@ -535,7 +537,8 @@ public class MainActivity extends Activity {
         final GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(compact ? h / 2f : px(RADIUS));
         if (banner != null) {
-            bg.setColor(0xFF1E1A1C);
+            // Nearly clear: banners with their own rounded corners show the sky there, not black.
+            bg.setColor(0x01000000);
             ImageView iv = new ImageView(this);
             iv.setImageDrawable(fit(banner, w, h));
             card.addView(iv, new FrameLayout.LayoutParams(-1, -1));
