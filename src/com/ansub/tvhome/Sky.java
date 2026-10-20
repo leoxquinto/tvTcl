@@ -72,12 +72,26 @@ final class Sky {
         p.setMaskFilter(null);
     }
 
-    // The moon at night, the sun by day, top middle.
+    // A soft glow: the alpha falls off smoothly and reaches the edge flat, so there is no visible rim.
+    private static RadialGradient glow(float cx, float cy, float r, int rgb, int peak) {
+        int n = 10;
+        int[] cols = new int[n + 1];
+        float[] pos = new float[n + 1];
+        for (int i = 0; i <= n; i++) {
+            float t = i / (float) n, f = (1 - t) * (1 - t) * (1 - t);
+            cols[i] = (Math.round(peak * f) << 24) | (rgb & 0x00FFFFFF);
+            pos[i] = t;
+        }
+        return new RadialGradient(cx, cy, r, cols, pos, Shader.TileMode.CLAMP);
+    }
+
+    // The moon at night, the sun by day, top middle. Low enough that the glow isn't cut by the top
+    // of the screen, and clear of the clock and the weather pill.
     private static void celestial(Canvas c, Paint p, int w, int h, boolean night) {
-        float cx = w * 0.55f, cy = h * 0.17f, u = w / 1280f; // top middle: clear of the clock and the weather pill
+        float cx = w * 0.55f, cy = h * 0.26f, u = w / 1280f;
         if (night) {
-            p.setShader(new RadialGradient(cx, cy, 150 * u, 0x55B8C8FF, 0x00B8C8FF, Shader.TileMode.CLAMP));
-            c.drawCircle(cx, cy, 150 * u, p);
+            p.setShader(glow(cx, cy, 190 * u, 0xB8C8FF, 0x70));
+            c.drawCircle(cx, cy, 190 * u, p);
             p.setShader(null);
             Path moon = new Path();
             moon.addCircle(cx, cy, 42 * u, Path.Direction.CW);
@@ -87,12 +101,13 @@ final class Sky {
             p.setColor(0xFFF4F6FF);
             c.drawPath(moon, p);
         } else {
-            p.setShader(new RadialGradient(cx, cy, 260 * u, 0x99FFF1B8, 0x00FFF1B8, Shader.TileMode.CLAMP));
-            c.drawCircle(cx, cy, 260 * u, p);
-            p.setShader(new RadialGradient(cx, cy, 95 * u, new int[] {0xFFFFFAE0, 0xFFFFF3C0, 0x00FFF3C0},
-                    new float[] {0f, 0.46f, 1f}, Shader.TileMode.CLAMP));
-            c.drawCircle(cx, cy, 95 * u, p);
+            p.setShader(glow(cx, cy, 240 * u, 0xFFF1B8, 0xA0));
+            c.drawCircle(cx, cy, 240 * u, p);
+            p.setShader(glow(cx, cy, 110 * u, 0xFFF8D8, 0xE0));
+            c.drawCircle(cx, cy, 110 * u, p);
             p.setShader(null);
+            p.setColor(0xFFFFFAE6);
+            c.drawCircle(cx, cy, 44 * u, p);
         }
     }
 }

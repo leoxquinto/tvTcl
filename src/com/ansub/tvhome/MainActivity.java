@@ -99,7 +99,6 @@ public class MainActivity extends Activity {
     private static final String[] QUICK_LABELS = {"Bluetooth", "Sound", "Picture"};
     private static final int[][] QUICK_ICONS = {LineIcon.BLUETOOTH, LineIcon.SOUND, LineIcon.PICTURE};
     private static final String NETWORK = "network";
-    private static final String TIMER = "timer";
     private static final String CLEAN = "clean";
     private static final int OFFLINE = 0, ETHERNET = 4; // network states; 1 to 3 are Wi-Fi bars
     // TCL keeps its own Picture and Sound panels in a service; Android's Sound page is missing there.
@@ -117,24 +116,13 @@ public class MainActivity extends Activity {
     private TextView weatherText;
     private TextView greetingView, dateView, timeView;
     private GradientDrawable weatherBgDrawable;
-    private TextView statsText, phraseView;
-    // Set these to your birthday to get a special greeting that day (0 = off).
-    private static final int BIRTHDAY_DAY = 0, BIRTHDAY_MONTH = 0;
-    // One phrase per weekday (Sunday first); the week of the month picks which of the three.
-    private static final String[][] WEEK_PHRASES = {
-        {"Domingo é dia de descansar e recarregar.", "Domingo tranquilo, aproveite sem pressa.", "Um domingo bom pede pipoca e sofá."},
-        {"Nova semana, novas conquistas.", "Segunda com calma, um passo de cada vez.", "Comece a semana do seu jeito."},
-        {"Terça de foco e boa energia.", "Terça é dia de fazer acontecer.", "Siga firme, a semana está rendendo."},
-        {"Quarta: metade da semana já foi.", "Quarta é dia de manter o ritmo.", "No meio da semana, respire fundo."},
-        {"Quinta: a sexta já está chegando.", "Quinta é quase sexta, aguente firme.", "Falta pouco para o fim de semana."},
-        {"Sextou! Hora de relaxar.", "Sexta é dia de comemorar a semana.", "Sexta-feira pede um descanso merecido."},
-        {"Sábado é dia de curtir sem culpa.", "Sábado livre: escolha algo bom para assistir.", "Hoje o relógio pode esperar."},
-    };
-    private View statsPill;
+    private TextView statsText;
+    private View weatherPill, statsPill;
+    private int pillWidth;
     private final List<GradientDrawable> pillBgs = new ArrayList<>();
+    // Your birthday gets its own greeting (set both to 0 to turn it off).
+    private static final int BIRTHDAY_DAY = 17, BIRTHDAY_MONTH = 2;
     private static final Locale PT_BR = new Locale("pt", "BR");
-    private static final String SLEEP_KEY = "sleep_timeout"; // the TV's own sleep timer, in milliseconds
-    private static final int[] SLEEP_MINUTES = {15, 30, 60, 90, 120, 0}; // 0 = off
     private View dockBg;        // the glass capsule behind the bottom row
     private boolean compact;    // building a slim pill for the dock instead of a big tile
     private final Runnable themeTick = new Runnable() {
@@ -224,11 +212,6 @@ public class MainActivity extends Activity {
         timeView = time;
         clock.addView(time);
         clock.addView(date);
-        phraseView = text(px(26), cSecondary(), regular);
-        glow(phraseView);
-        LinearLayout.LayoutParams phraseLp = new LinearLayout.LayoutParams(-2, -2);
-        phraseLp.topMargin = px(12);
-        clock.addView(phraseView, phraseLp);
         root.addView(clock, at(px(MARGIN), px(96), px(820), -2));
 
         // The weather is a glass pill at the top right, under the network icon.
@@ -253,6 +236,12 @@ public class MainActivity extends Activity {
         weatherLp.topMargin = px(176);
         weatherLp.rightMargin = px(MARGIN);
         root.addView(weatherCard, weatherLp);
+        weatherPill = weatherCard;
+        weatherCard.addOnLayoutChangeListener((pillView, left0, top0, right0, bottom0, oldLeft0, oldTop0, oldRight0, oldBottom0) -> {
+            if (right0 - left0 == pillWidth) return;
+            pillWidth = right0 - left0;
+            pillView.post(() -> { if (!isDestroyed() && movingKey == null) buildTiles(); });
+        });
 
         // Memory and storage: a glass pill centered under the dock. buildTiles sets its top.
         statsText = text(px(24), cMain(), regular);
@@ -482,33 +471,59 @@ public class MainActivity extends Activity {
         return p;
     }
 
-    // The greeting follows the time of day, and the line under the date follows the weekday and the
-    // week of the month, with a few special days. Refreshed every minute.
+    // Easter Sunday of a year (the Gregorian calendar), as a date in São Paulo.
+    private static Calendar easter(int y) {
+        int a = y % 19, b = y / 100, c = y % 100, d = b / 4, e = b % 4, f = (b + 8) / 25, g = (b - f + 1) / 3;
+        int h = (19 * a + b - d - g + 15) % 30, i = c / 4, k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+        int m = (a + 11 * h + 22 * l) / 451;
+        int month = (h + l - 7 * m + 114) / 31, day = (h + l - 7 * m + 114) % 31 + 1;
+        Calendar cal = Calendar.getInstance(TimeZone.getTimeZone("America/Sao_Paulo"));
+        cal.clear();
+        cal.set(y, month - 1, day);
+        return cal;
+    }
+
+    // The greeting for today if it is a special day, else null. The birthday comes first. Carnival,
+    // Good Friday, Easter and Corpus Christi move with Easter; Mother's and Father's Day are the
+    // second Sunday of May and of August.
+    private static String holidayGreeting(Calendar c) {
+        int y = c.get(Calendar.YEAR), d = c.get(Calendar.DAY_OF_MONTH), m = c.get(Calendar.MONTH) + 1;
+        boolean sunday = c.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY;
+        int e = c.get(Calendar.DAY_OF_YEAR) - easter(y).get(Calendar.DAY_OF_YEAR); // days after Easter
+        if (d == BIRTHDAY_DAY && m == BIRTHDAY_MONTH) return "Feliz aniversário, Leonardo!";
+        if (d == 1 && m == 1) return "Feliz Ano Novo, Leonardo!";
+        if (e >= -50 && e <= -47) return "Feliz Carnaval, Leonardo!";
+        if (e == -2) return "Uma Sexta-feira Santa tranquila, Leonardo!";
+        if (e == 0) return "Feliz Páscoa, Leonardo!";
+        if (d == 21 && m == 4) return "Feliz Dia de Tiradentes, Leonardo!";
+        if (d == 1 && m == 5) return "Feliz Dia do Trabalhador, Leonardo!";
+        if (m == 5 && sunday && d >= 8 && d <= 14) return "Feliz Dia das Mães!";
+        if (d == 12 && m == 6) return "Feliz Dia dos Namorados, Leonardo!";
+        if (e == 60) return "Feliz Corpus Christi, Leonardo!";
+        if (d == 24 && m == 6) return "Feliz São João, Leonardo!";
+        if (d == 20 && m == 7) return "Feliz Dia do Amigo, Leonardo!";
+        if (m == 8 && sunday && d >= 8 && d <= 14) return "Feliz Dia dos Pais!";
+        if (d == 7 && m == 9) return "Feliz Dia da Independência, Leonardo!";
+        if (d == 12 && m == 10) return "Feliz Dia das Crianças!";
+        if (d == 31 && m == 10) return "Feliz Halloween, Leonardo!";
+        if (d == 2 && m == 11) return "Dia de Finados, Leonardo";
+        if (d == 15 && m == 11) return "Feliz Proclamação da República, Leonardo!";
+        if (d == 20 && m == 11) return "Feliz Dia da Consciência Negra, Leonardo!";
+        if (d == 24 && m == 12) return "Feliz Véspera de Natal, Leonardo!";
+        if (d == 25 && m == 12) return "Feliz Natal, Leonardo!";
+        if (d == 31 && m == 12) return "Feliz Réveillon, Leonardo!";
+        return null;
+    }
+
+    // The greeting follows the time of day, except on a special day. Refreshed every minute.
     private void updateGreeting() {
         if (greetingView == null) return;
         Calendar c = Calendar.getInstance(TimeZone.getTimeZone("America/Sao_Paulo"));
-        int h = c.get(Calendar.HOUR_OF_DAY), d = c.get(Calendar.DAY_OF_MONTH), m = c.get(Calendar.MONTH) + 1;
-        String hello = h >= 5 && h < 12 ? "Bom dia" : h >= 12 && h < 18 ? "Boa tarde" : "Boa noite";
-        String greeting = hello + ", Leonardo!";
-        String phrase = WEEK_PHRASES[c.get(Calendar.DAY_OF_WEEK) - 1][((d - 1) / 7) % 3];
-        if (d == BIRTHDAY_DAY && m == BIRTHDAY_MONTH) {
-            greeting = "Feliz aniversário, Leonardo!";
-            phrase = "Hoje o dia é todo seu.";
-        } else if (d == 1 && m == 1) {
-            greeting = "Feliz Ano Novo, Leonardo!";
-            phrase = "Que este ano seja leve e cheio de coisas boas.";
-        } else if (d == 25 && m == 12) {
-            greeting = "Feliz Natal, Leonardo!";
-            phrase = "Aproveite o dia ao lado de quem você gosta.";
-        } else if (d == 31 && m == 12) {
-            phrase = "Último dia do ano: hora de agradecer.";
-        } else if (d == 1 && m == 5) {
-            phrase = "Dia do Trabalhador: descanse, você merece.";
-        } else if (d == 7 && m == 9) {
-            phrase = "Feliz Dia da Independência!";
-        }
+        int h = c.get(Calendar.HOUR_OF_DAY);
+        String greeting = holidayGreeting(c);
+        if (greeting == null)
+            greeting = (h >= 5 && h < 12 ? "Bom dia" : h >= 12 && h < 18 ? "Boa tarde" : "Boa noite") + ", Leonardo!";
         greetingView.setText(greeting);
-        if (phraseView != null) phraseView.setText(phrase);
     }
 
     // Free memory and free storage, refreshed every minute and when the home screen comes back.
@@ -521,36 +536,6 @@ public class MainActivity extends Activity {
             statsText.setText(String.format(PT_BR, "RAM livre %d MB  ·  Armazenamento livre %.1f GB",
                     mi.availMem / (1024 * 1024), fs.getAvailableBytes() / 1073741824.0));
         } catch (Throwable ignored) {}
-    }
-
-    private int sleepMs() {
-        try { return Settings.Secure.getInt(getContentResolver(), SLEEP_KEY, -1); }
-        catch (Throwable t) { return -1; }
-    }
-
-    private static String sleepLabel(int minutes) {
-        return minutes <= 0 ? "desligado" : minutes % 60 == 0 ? (minutes / 60) + " h" : minutes + " min";
-    }
-
-    // The timer button. It works on the TV's own sleep timer: the TV puts itself to sleep after that
-    // long with nobody using it (an app can't switch the TV off by itself). With the
-    // WRITE_SECURE_SETTINGS permission (granted once with adb) each press steps through 15, 30, 60,
-    // 90 and 120 minutes and off, and says which. Without it, the press opens the TV's own screen.
-    private void onTimerClick() {
-        if (android.os.Build.VERSION.SDK_INT >= 23
-                && checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS") == PackageManager.PERMISSION_GRANTED) {
-            try {
-                int now = Math.max(0, sleepMs()) / 60000, next = SLEEP_MINUTES[0];
-                for (int i = 0; i < SLEEP_MINUTES.length; i++)
-                    if (SLEEP_MINUTES[i] == now) { next = SLEEP_MINUTES[(i + 1) % SLEEP_MINUTES.length]; break; }
-                Settings.Secure.putInt(getContentResolver(), SLEEP_KEY, next == 0 ? -1 : next * 60000);
-                Toast.makeText(this, "Timer para desligar: " + sleepLabel(next), Toast.LENGTH_SHORT).show();
-                return;
-            } catch (Throwable ignored) {}
-        }
-        Intent i = new Intent(Settings.ACTION_DREAM_SETTINGS);
-        if (i.resolveActivity(getPackageManager()) == null) i = new Intent(Settings.ACTION_SETTINGS);
-        try { startActivity(i); } catch (Exception ignored) {}
     }
 
     // Ends the background processes of the apps on the home screen (never this one, never the app in
@@ -695,21 +680,22 @@ public class MainActivity extends Activity {
         sp.topMargin = dockTop + ch + 2 * pad + px(16);
         statsPill.setLayoutParams(sp);
 
-        // Plain icons at the top right, level with the date: the network icon, then any settings
-        // shortcuts picked (Bluetooth by default), then the sleep timer and clean-memory buttons. Added last, so the first app keeps first focus; Up from the apps reaches them.
+        // Plain icons, centered right above the weather pill: the network icon, then any settings
+        // shortcuts picked (Bluetooth by default), then the clean-memory button. Added last, so the
+        // first app keeps first focus; Up from the apps reaches them.
         List<Integer> quick = quickList();
         int ib = px(ICON_BUTTON), ig = px(ICON_GAP);
-        // The last icon's right edge lines up with the apps' (its focus circle sticks out past them).
-        int qx = getResources().getDisplayMetrics().widthPixels - m + (ib - px(ICON_SIZE)) / 2
-                - (quick.size() + 3) * ib - (quick.size() + 2) * ig;
+        int count = quick.size() + 2;
+        int sw = getResources().getDisplayMetrics().widthPixels;
+        int pillMid = weatherPill != null && weatherPill.getWidth() > 0
+                ? weatherPill.getLeft() + weatherPill.getWidth() / 2 : sw - m - px(260);
+        int qx = pillMid - (count * ib + (count - 1) * ig) / 2;
         netIcon = addIcon(NETWORK, "Network", null, qx);
         qx += ib + ig;
         for (int q : quick) {
             addIcon(QUICK + QUICK_NAMES[q], QUICK_LABELS[q], new LineIcon(QUICK_ICONS[q]), qx);
             qx += ib + ig;
         }
-        addIcon(TIMER, "Timer para desligar", new LineIcon(LineIcon.TIMER), qx);
-        qx += ib + ig;
         addIcon(CLEAN, "Limpar memória", new LineIcon(LineIcon.TRASH), qx);
         netState = -1;
         refreshNetwork();
@@ -857,9 +843,6 @@ public class MainActivity extends Activity {
             return;
         } else if (NETWORK.equals(key)) {
             openNetworkSettings();
-            return;
-        } else if (TIMER.equals(key)) {
-            onTimerClick();
             return;
         } else if (CLEAN.equals(key)) {
             cleanMemory();
