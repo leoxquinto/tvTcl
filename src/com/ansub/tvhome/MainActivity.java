@@ -203,11 +203,11 @@ public class MainActivity extends Activity {
         weatherBg.setColor(cardFill());
         weatherBg.setStroke(Math.max(1, px(2)), cardStroke());
         weatherCard.setBackground(weatherBg);
-        weatherText = text(px(25), cMain(), regular);
+        weatherText = text(px(24), cMain(), regular);
         weatherText.setText("São Paulo · Consultando o clima…");
         weatherText.setMaxLines(2);
         weatherCard.addView(weatherText);
-        int pillW = px(640);
+        int pillW = px(700);
         int pillX = Math.max(px(MARGIN), getResources().getDisplayMetrics().widthPixels - px(MARGIN) - pillW);
         root.addView(weatherCard, at(pillX, px(176), pillW, px(116)));
 
@@ -273,7 +273,7 @@ public class MainActivity extends Activity {
         }
         if (quick != null) {
             quick = quick.trim();
-            if (quick.isEmpty() || quick.equalsIgnoreCase("none")) e.remove("quick");
+            if (quick.isEmpty() || quick.equalsIgnoreCase("none")) e.putString("quick", "none");
             else e.putString("quick", quick);
         }
         e.apply();
@@ -383,7 +383,7 @@ public class MainActivity extends Activity {
                 String condition = weatherDescription(code);
                 runOnUiThread(() -> {
                     if (weatherText != null) weatherText.setText(String.format(Locale.forLanguageTag("pt-BR"),
-                            "☀  %.0f°  ·  São Paulo, SP\n%s  ·  Nascer %s  /  Pôr %s",
+                            "☀  %.0f°  ·  %s\nSão Paulo  ·  Nascer %s  ·  Pôr %s",
                             temp, condition, rise.substring(11,16), set.substring(11,16)));
                     applyAutoTheme();
                 });
@@ -507,18 +507,19 @@ public class MainActivity extends Activity {
         addTile(root, ADD, "Add app", null, LineIcon.PLUS, null, x0 + col * (cw + cg), ty, cw, ch);
         compact = false;
 
-        // Plain icons at the top right, level with the date: any settings shortcuts picked, then the
-        // network icon. Added last, so the first app keeps first focus; Up from the apps reaches them.
+        // Plain icons at the top right, level with the date: the network icon, then any settings
+        // shortcuts picked (Bluetooth by default). Added last, so the first app keeps first focus; Up from the apps reaches them.
         List<Integer> quick = quickList();
         int ib = px(ICON_BUTTON), ig = px(ICON_GAP);
         // The last icon's right edge lines up with the apps' (its focus circle sticks out past them).
         int qx = getResources().getDisplayMetrics().widthPixels - m + (ib - px(ICON_SIZE)) / 2
                 - (quick.size() + 1) * ib - quick.size() * ig;
+        netIcon = addIcon(NETWORK, "Network", null, qx);
+        qx += ib + ig;
         for (int q : quick) {
             addIcon(QUICK + QUICK_NAMES[q], QUICK_LABELS[q], new LineIcon(QUICK_ICONS[q]), qx);
             qx += ib + ig;
         }
-        netIcon = addIcon(NETWORK, "Network", null, qx);
         netState = -1;
         refreshNetwork();
 
@@ -712,7 +713,7 @@ public class MainActivity extends Activity {
     private List<Integer> quickList() {
         List<Integer> out = new ArrayList<>();
         String saved = getSharedPreferences(PREFS, 0).getString("quick", null);
-        if (saved == null) return out;
+        if (saved == null) saved = "bluetooth"; // shown by default, next to the network icon
         for (String name : saved.split("[,\\s]+")) {
             int q = Arrays.asList(QUICK_NAMES).indexOf(name.toLowerCase(java.util.Locale.ROOT));
             if (q < 0 || out.contains(q) || quickIntents(QUICK_NAMES[q]).isEmpty()) continue;
