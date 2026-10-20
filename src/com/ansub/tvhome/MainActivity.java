@@ -87,7 +87,7 @@ public class MainActivity extends Activity {
     private static final String ADD = "add";
     private static final String[] EDIT_ITEMS = {"Move", "Replace", "Remove from home", "Uninstall"};
     private static final String[] EDIT_ITEMS_SYSTEM = {"Move", "Replace", "Remove from home", "App info"};
-    private static final int PER_ROW = 6, MAX_INPUTS = 4;
+    private static final int PER_ROW = 4, MAX_INPUTS = 4;
 
     // Settings shortcuts: name, label, icon. Tile keys are QUICK + name.
     private static final String QUICK = "quick:";
@@ -101,8 +101,8 @@ public class MainActivity extends Activity {
 
     // Layout is designed at 1920x1080 and scaled to the TV's real UI size by px().
     private static final int MARGIN = 96, GAP = 36, RADIUS = 22;
-    private static final int ROW1_TOP = 604, ROW_STEP = 224;
-    private static final int GRID_MIN_TOP = 400; // more rows push the grid up, but not into the clock
+    private static final int ROW1_TOP = 520, ROW_STEP = 300;
+    private static final int GRID_MIN_TOP = 360; // more rows push the grid up, but not into the clock
     private static final int ICON_TOP = 76, ICON_BUTTON = 72, ICON_SIZE = 40, ICON_GAP = 12; // level with the date
     private float scale = 1f;
 
@@ -111,6 +111,8 @@ public class MainActivity extends Activity {
     private TextView weatherText;
     private TextView greetingView, dateView, timeView;
     private GradientDrawable weatherBgDrawable;
+    private View dockBg;        // the glass capsule behind the bottom row
+    private boolean compact;    // building a slim pill for the dock instead of a big tile
     private final Runnable themeTick = new Runnable() {
         @Override public void run() { applyAutoTheme(); weatherHandler.postDelayed(this, 60L * 1000L); }
     };
@@ -154,7 +156,7 @@ public class MainActivity extends Activity {
         loadFonts();
         scale = getResources().getDisplayMetrics().widthPixels / 1920f;
         darkTheme = computeDark();
-        LineIcon.tint = darkTheme ? 0xEBFFFFFF : 0xE61C1C1E;
+        LineIcon.tint = 0xEBFFFFFF;
         getWindow().setBackgroundDrawable(background());
 
         ScrollView scroller = new ScrollView(this);
@@ -166,41 +168,48 @@ public class MainActivity extends Activity {
         root.setClipChildren(false);
         scroller.addView(root, new FrameLayout.LayoutParams(-1, -2));
 
-        TextView greeting = text(px(38), cMain(), semibold);
+        TextView greeting = text(px(34), cSecondary(), semibold);
         greetingView = greeting;
         greeting.setText("Bem-vindo, Leonardo!");
-        greeting.setShadowLayer(px(12), 0, px(2), 0x44000000);
-        root.addView(greeting, at(px(MARGIN), px(62), -2, -2));
+        glow(greeting);
+        root.addView(greeting, at(px(MARGIN), px(58), -2, -2));
 
+        // The clock sits top left, thin and large, with the date under it.
         LinearLayout clock = new LinearLayout(this);
         clock.setOrientation(LinearLayout.VERTICAL);
-        clock.setGravity(Gravity.END);
-        TextClock date = clock("EEEE, d MMMM", "EEEE, d MMMM", px(27), cSecondary(), regular);
-        TextClock time = clock("h:mm", "H:mm", px(118), cMain(), semibold);
-        dateView = date;
-        timeView = time;
-        time.setLetterSpacing(-0.028f);
+        clock.setGravity(Gravity.START);
+        TextClock time = clock("h:mm", "H:mm", px(136), cMain(), regular);
+        time.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+        time.setLetterSpacing(-0.02f);
         time.setFontFeatureSettings("tnum");
         time.setIncludeFontPadding(false);
-        clock.addView(date);
+        glow(time);
+        TextClock date = clock("EEEE, d MMMM", "EEEE, d MMMM", px(28), cSecondary(), regular);
+        glow(date);
+        dateView = date;
+        timeView = time;
         clock.addView(time);
-        int clockX = Math.max(px(MARGIN), getResources().getDisplayMetrics().widthPixels - px(510));
-        root.addView(clock, at(clockX, px(128), px(410), -2));
+        clock.addView(date);
+        root.addView(clock, at(px(MARGIN), px(96), px(820), -2));
 
+        // The weather is a glass pill at the top right, under the network icon.
         LinearLayout weatherCard = new LinearLayout(this);
         weatherCard.setOrientation(LinearLayout.VERTICAL);
-        weatherCard.setPadding(px(28), px(22), px(28), px(22));
+        weatherCard.setGravity(Gravity.CENTER_VERTICAL);
+        weatherCard.setPadding(px(34), px(16), px(34), px(16));
         GradientDrawable weatherBg = new GradientDrawable();
-        weatherBg.setCornerRadius(px(28));
+        weatherBg.setCornerRadius(px(48));
         weatherBgDrawable = weatherBg;
         weatherBg.setColor(cardFill());
         weatherBg.setStroke(Math.max(1, px(2)), cardStroke());
         weatherCard.setBackground(weatherBg);
-        weatherText = text(px(27), cMain(), regular);
+        weatherText = text(px(25), cMain(), regular);
         weatherText.setText("São Paulo · Consultando o clima…");
         weatherText.setMaxLines(2);
         weatherCard.addView(weatherText);
-        root.addView(weatherCard, at(px(MARGIN), px(142), px(660), px(142)));
+        int pillW = px(640);
+        int pillX = Math.max(px(MARGIN), getResources().getDisplayMetrics().widthPixels - px(MARGIN) - pillW);
+        root.addView(weatherCard, at(pillX, px(176), pillW, px(116)));
 
         moveHint = text(px(24), cHint(), regular);
         moveHint.setText("Use the arrows to move it, then press OK");
@@ -309,28 +318,26 @@ public class MainActivity extends Activity {
     @Override
     public void onBackPressed() { /* home screen: nothing to go back to */ }
 
-    // Apple TV style: true black at night, soft light gray by day. Drawn once by the window.
+    // A night sky or a day sky, drawn once into a bitmap (see Sky). Which one follows the sun.
     private Drawable background() {
-        int[] colors = darkTheme ? new int[] {0xFF000000, 0xFF050506, 0xFF000000}
-                : new int[] {0xFFF5F5F7, 0xFFEAEAEE, 0xFFDEDEE4};
-        GradientDrawable base = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors);
-        GradientDrawable glow = radial(darkTheme ? 0x1FFFFFFF : 0x99FFFFFF, 0.08f, -0.12f, px(1250));
-        GradientDrawable tint = radial(darkTheme ? 0x1A2A3550 : 0x1A8D9BBA, 1.0f, 1.1f, px(1000));
-        for (GradientDrawable g : new GradientDrawable[] {base, glow, tint}) g.setDither(true);
-        return new LayerDrawable(new Drawable[] {base, glow, tint});
+        int dw = getResources().getDisplayMetrics().widthPixels;
+        int bw = Math.min(dw > 0 ? dw : 1280, 1280);
+        int bh = bw * 9 / 16;
+        return new android.graphics.drawable.BitmapDrawable(getResources(), Sky.render(bw, bh, darkTheme));
     }
 
-    // Theme palette. Night is dark, day is light; see computeDark.
-    private int cMain() { return darkTheme ? 0xFFFFFFFF : 0xFF1C1C1E; }
-    private int cSecondary() { return darkTheme ? 0xB3FFFFFF : 0xFF5C5C63; }
-    private int cHint() { return darkTheme ? 0xA8FFFFFF : 0xFF6B6B73; }
-    private int cardFill() { return darkTheme ? 0x1FFFFFFF : 0xB3FFFFFF; }
-    private int cardStroke() { return darkTheme ? 0x24FFFFFF : 0x14000000; }
+    // Palette: text is white on both skies; only the glass gets a touch lighter by day.
+    private int cMain() { return 0xFFFFFFFF; }
+    private int cSecondary() { return 0xD9FFFFFF; }
+    private int cHint() { return 0xB3FFFFFF; }
+    private int cardFill() { return darkTheme ? 0x26FFFFFF : 0x33FFFFFF; }
+    private int cardStroke() { return darkTheme ? 0x2EFFFFFF : 0x40FFFFFF; }
     private int glassColor(boolean focused) {
-        if (darkTheme) return focused ? 0x40FFFFFF : 0x14FFFFFF;
-        return focused ? 0xFFFFFFFF : 0xB3FFFFFF;
+        if (darkTheme) return focused ? 0x4DFFFFFF : 0x1FFFFFFF;
+        return focused ? 0x73FFFFFF : 0x38FFFFFF;
     }
-    private int focusCircle() { return darkTheme ? 0x38FFFFFF : 0x24000000; }
+    private int focusCircle() { return darkTheme ? 0x40FFFFFF : 0x59FFFFFF; }
+    private void glow(TextView t) { t.setShadowLayer(px(10), 0, px(2), 0x66000000); }
 
     // Day or night from the cached sunrise and sunset (minutes of the day), so it works offline and
     // right at start. Without a cache yet it assumes 6:00 to 18:00.
@@ -400,7 +407,7 @@ public class MainActivity extends Activity {
     }
 
     private void updateThemeColors() {
-        LineIcon.tint = darkTheme ? 0xEBFFFFFF : 0xE61C1C1E;
+        LineIcon.tint = 0xEBFFFFFF;
         if (greetingView != null) greetingView.setTextColor(cMain());
         if (dateView != null) dateView.setTextColor(cSecondary());
         if (timeView != null) timeView.setTextColor(cMain());
@@ -432,6 +439,7 @@ public class MainActivity extends Activity {
             ((ViewGroup) wrap.getParent()).removeView(wrap);
         }
         tiles.clear();
+        if (dockBg != null && dockBg.getParent() != null) root.removeView(dockBg);
         rowApps.clear();
         movingKey = null;
         moveHint.setVisibility(View.GONE);
@@ -452,7 +460,7 @@ public class MainActivity extends Activity {
         gridTop = Math.max(px(GRID_MIN_TOP), px(ROW1_TOP) - (rows - 1) * px(ROW_STEP));
         int bottomTop = gridTop + rows * px(ROW_STEP);
         ((FrameLayout.LayoutParams) moveHint.getLayoutParams()).topMargin = gridTop - px(64);
-        root.setMinimumHeight(bottomTop + h + px(MARGIN));
+        root.setMinimumHeight(bottomTop + px(30) + px(120) + px(MARGIN));
 
         for (String pkg : apps) {
             Intent li = launchIntent(pm, pkg);
@@ -472,18 +480,32 @@ public class MainActivity extends Activity {
             addTile(root, pkg, label, banner, null, icon, gridX(i), gridY(i), w, h);
         }
 
-        // Bottom row: Play Store, HDMI inputs, Settings and Add app, six at most.
-        int col = 0;
+        // Bottom row, in a glass dock like Apple TV's: Play Store, HDMI inputs, Settings and Add app.
         boolean store = !apps.contains(PLAY_STORE) && launchIntent(pm, PLAY_STORE) != null;
         List<TvInputInfo> inputs = hdmiInputs();
-        int room = PER_ROW - 2 - (store ? 1 : 0);
+        int room = 6 - 2 - (store ? 1 : 0);
         if (inputs.size() > room) inputs = inputs.subList(0, room);
+        int count = (store ? 1 : 0) + inputs.size() + 2;
+        int cw = px(236), cg = px(16), ch = px(84), pad = px(18);
+        int total = count * cw + (count - 1) * cg;
+        int x0 = (getResources().getDisplayMetrics().widthPixels - total) / 2;
+        int dockTop = bottomTop + px(30);
+        dockBg = new View(this);
+        GradientDrawable dg = new GradientDrawable();
+        dg.setCornerRadius((ch + 2 * pad) / 2f);
+        dg.setColor(cardFill());
+        dg.setStroke(Math.max(1, px(2)), cardStroke());
+        dockBg.setBackground(dg);
+        root.addView(dockBg, at(x0 - pad, dockTop, total + 2 * pad, ch + 2 * pad));
+        compact = true;
+        int col = 0, ty = dockTop + pad;
         if (store)
-            addTile(root, PLAY_STORE, "Play Store", null, LineIcon.PLAY, null, m + col++ * (w + g), bottomTop, w, h);
+            addTile(root, PLAY_STORE, "Play Store", null, LineIcon.PLAY, null, x0 + col++ * (cw + cg), ty, cw, ch);
         for (TvInputInfo in : inputs)
-            addTile(root, in.getId(), inputLabel(in), null, LineIcon.HDMI, null, m + col++ * (w + g), bottomTop, w, h);
-        addTile(root, SETTINGS, "Settings", null, LineIcon.SETTINGS, null, m + col++ * (w + g), bottomTop, w, h);
-        addTile(root, ADD, "Add app", null, LineIcon.PLUS, null, m + col * (w + g), bottomTop, w, h);
+            addTile(root, in.getId(), inputLabel(in), null, LineIcon.HDMI, null, x0 + col++ * (cw + cg), ty, cw, ch);
+        addTile(root, SETTINGS, "Settings", null, LineIcon.SETTINGS, null, x0 + col++ * (cw + cg), ty, cw, ch);
+        addTile(root, ADD, "Add app", null, LineIcon.PLUS, null, x0 + col * (cw + cg), ty, cw, ch);
+        compact = false;
 
         // Plain icons at the top right, level with the date: any settings shortcuts picked, then the
         // network icon. Added last, so the first app keeps first focus; Up from the apps reaches them.
@@ -510,7 +532,7 @@ public class MainActivity extends Activity {
                          int x, int y, int w, int h) {
         FrameLayout card = new FrameLayout(this);
         final GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(px(RADIUS));
+        bg.setCornerRadius(compact ? h / 2f : px(RADIUS));
         if (banner != null) {
             bg.setColor(0xFF1E1A1C);
             ImageView iv = new ImageView(this);
@@ -521,10 +543,10 @@ public class MainActivity extends Activity {
             bg.setColor(glassColor(false));
             bg.setStroke(Math.max(1, px(2)), cardStroke());
             LinearLayout inner = new LinearLayout(this);
-            inner.setOrientation(LinearLayout.VERTICAL);
+            inner.setOrientation(compact ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
             inner.setGravity(Gravity.CENTER);
             ImageView iv = new ImageView(this);
-            int size = lineIcon != null ? px(44) : px(64);
+            int size = compact ? px(34) : lineIcon != null ? px(44) : px(64);
             if (lineIcon != null) iv.setImageDrawable(new LineIcon(lineIcon));
             else if (appIcon != null) iv.setImageDrawable(fit(appIcon, size, size));
             inner.addView(iv, new LinearLayout.LayoutParams(size, size));
@@ -535,7 +557,7 @@ public class MainActivity extends Activity {
             t.setGravity(Gravity.CENTER);
             t.setPadding(px(16), 0, px(16), 0);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
-            lp.topMargin = px(12);
+            if (compact) lp.leftMargin = px(14); else lp.topMargin = px(12);
             inner.addView(t, lp);
             card.addView(inner, new FrameLayout.LayoutParams(-1, -1));
         }
@@ -545,7 +567,7 @@ public class MainActivity extends Activity {
         card.setTag(key);
 
         // Banner tiles show their name underneath when focused.
-        final TextView caption = banner == null ? null : text(px(24), cMain(), regular);
+        final TextView caption = banner == null ? null : text(px(30), cMain(), semibold);
         if (caption != null) {
             caption.setText(label);
             caption.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -553,9 +575,13 @@ public class MainActivity extends Activity {
         }
 
         final boolean glass = banner == null;
+        final GradientDrawable ring = new GradientDrawable();
+        ring.setCornerRadius(px(RADIUS));
+        ring.setStroke(Math.max(2, px(3)), 0xE6FFFFFF);
         card.setOnFocusChangeListener((v, has) -> {
             if (has) focusedKey = key;
             if (glass) bg.setColor(glassColor(has));
+            else if (!key.equals(movingKey)) ((FrameLayout) v).setForeground(has ? ring : null);
             v.animate().scaleX(has ? 1.1f : 1f).scaleY(has ? 1.1f : 1f).translationZ(has ? px(26) : 0)
                     .setDuration(140).withLayer().start();
             if (caption != null) caption.setVisibility(has ? View.VISIBLE : View.INVISIBLE);
