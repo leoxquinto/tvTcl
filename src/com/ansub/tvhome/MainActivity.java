@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.Dialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.app.ActivityManager;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
@@ -31,6 +32,8 @@ import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Environment;
+import android.os.StatFs;
 import android.provider.Settings;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -47,6 +50,7 @@ import android.widget.ListView;
 import android.widget.ScrollView;
 import android.widget.TextClock;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.io.File;
 import java.net.HttpURLConnection;
@@ -95,6 +99,7 @@ public class MainActivity extends Activity {
     private static final String[] QUICK_LABELS = {"Bluetooth", "Sound", "Picture"};
     private static final int[][] QUICK_ICONS = {LineIcon.BLUETOOTH, LineIcon.SOUND, LineIcon.PICTURE};
     private static final String NETWORK = "network";
+    private static final String TIMER = "timer";
     private static final int OFFLINE = 0, ETHERNET = 4; // network states; 1 to 3 are Wi-Fi bars
     // TCL keeps its own Picture and Sound panels in a service; Android's Sound page is missing there.
     private static final String TCL_SHOW_WINDOW = "com.tcl.settings.SHOW_WINDOW";
@@ -102,7 +107,7 @@ public class MainActivity extends Activity {
     // Layout is designed at 1920x1080 and scaled to the TV's real UI size by px().
     private static final int MARGIN = 96, GAP = 36, RADIUS = 22;
     private static final int ROW1_TOP = 600, ROW_STEP = 224;
-    private static final int GRID_MIN_TOP = 360; // more rows push the grid up, but not into the clock
+    private static final int GRID_MIN_TOP = 380; // more rows push the grid up, but not into the clock
     private static final int ICON_TOP = 76, ICON_BUTTON = 72, ICON_SIZE = 40, ICON_GAP = 12; // level with the date
     private float scale = 1f;
 
@@ -111,10 +116,15 @@ public class MainActivity extends Activity {
     private TextView weatherText;
     private TextView greetingView, dateView, timeView;
     private GradientDrawable weatherBgDrawable;
+    private TextView statsText;
+    private final List<GradientDrawable> pillBgs = new ArrayList<>();
+    private static final Locale PT_BR = new Locale("pt", "BR");
+    private static final String SLEEP_KEY = "sleep_timeout"; // the TV's own sleep timer, in milliseconds
+    private static final int[] SLEEP_MINUTES = {15, 30, 60, 90, 120, 0}; // 0 = off
     private View dockBg;        // the glass capsule behind the bottom row
     private boolean compact;    // building a slim pill for the dock instead of a big tile
     private final Runnable themeTick = new Runnable() {
-        @Override public void run() { applyAutoTheme(); weatherHandler.postDelayed(this, 60L * 1000L); }
+        @Override public void run() { applyAutoTheme(); updateStats(); weatherHandler.postDelayed(this, 60L * 1000L); }
     };
     private TextClock clockDate, clockTime;
     private final Handler weatherHandler = new Handler(Looper.getMainLooper());
@@ -207,11 +217,23 @@ public class MainActivity extends Activity {
         weatherText.setText("São Paulo · Consultando o clima…");
         weatherText.setMaxLines(2);
         weatherCard.addView(weatherText);
-        // As wide as its text needs (so nothing gets cut), pinned to the right margin.
-        FrameLayout.LayoutParams pill = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
-        pill.topMargin = px(176);
-        pill.rightMargin = px(MARGIN);
-        root.addView(weatherCard, pill);
+        pillBgs.add(weatherBg);
+
+        // Two glass pills, one under the other, each as wide as its text needs (so nothing gets
+        // cut), pinned to the right margin: weather, then memory and storage.
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setGravity(Gravity.END);
+        column.addView(weatherCard, new LinearLayout.LayoutParams(-2, -2));
+        statsText = text(px(24), cMain(), regular);
+        LinearLayout.LayoutParams belowStats = new LinearLayout.LayoutParams(-2, -2);
+        belowStats.topMargin = px(14);
+        column.addView(pillOf(statsText), belowStats);
+        FrameLayout.LayoutParams colLp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
+        colLp.topMargin = px(176);
+        colLp.rightMargin = px(MARGIN);
+        root.addView(column, colLp);
+        updateStats();
 
         moveHint = text(px(24), cHint(), regular);
         moveHint.setText("Use the arrows to move it, then press OK");
@@ -313,6 +335,7 @@ public class MainActivity extends Activity {
             buildTiles();
         }
         refreshNetwork();
+        updateStats();
         View f = getCurrentFocus();
         if (f == null && !tiles.isEmpty()) tiles.get(0).requestFocus();
     }
@@ -408,6 +431,64 @@ public class MainActivity extends Activity {
         return "Condição variável";
     }
 
+    // A glass pill around one line of text, like the weather one.
+    private View pillOf(TextView text) {
+        LinearLayout p = new LinearLayout(this);
+        p.setOrientation(LinearLayout.VERTICAL);
+        p.setGravity(Gravity.CENTER_VERTICAL);
+        p.setPadding(px(30), px(12), px(30), px(12));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(px(36));
+        bg.setColor(cardFill());
+        bg.setStroke(Math.max(1, px(2)), cardStroke());
+        pillBgs.add(bg);
+        p.setBackground(bg);
+        p.addView(text);
+        return p;
+    }
+
+    // Free memory and free storage, refreshed every minute and when the home screen comes back.
+    private void updateStats() {
+        if (statsText == null) return;
+        try {
+            ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
+            ((ActivityManager) getSystemService(Context.ACTIVITY_SERVICE)).getMemoryInfo(mi);
+            StatFs fs = new StatFs(Environment.getDataDirectory().getPath());
+            statsText.setText(String.format(PT_BR, "RAM livre %d MB  ·  Armazenamento livre %.1f GB",
+                    mi.availMem / (1024 * 1024), fs.getAvailableBytes() / 1073741824.0));
+        } catch (Throwable ignored) {}
+    }
+
+    private int sleepMs() {
+        try { return Settings.Secure.getInt(getContentResolver(), SLEEP_KEY, -1); }
+        catch (Throwable t) { return -1; }
+    }
+
+    private static String sleepLabel(int minutes) {
+        return minutes <= 0 ? "desligado" : minutes % 60 == 0 ? (minutes / 60) + " h" : minutes + " min";
+    }
+
+    // The timer button. It works on the TV's own sleep timer: the TV puts itself to sleep after that
+    // long with nobody using it (an app can't switch the TV off by itself). With the
+    // WRITE_SECURE_SETTINGS permission (granted once with adb) each press steps through 15, 30, 60,
+    // 90 and 120 minutes and off, and says which. Without it, the press opens the TV's own screen.
+    private void onTimerClick() {
+        if (android.os.Build.VERSION.SDK_INT >= 23
+                && checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS") == PackageManager.PERMISSION_GRANTED) {
+            try {
+                int now = Math.max(0, sleepMs()) / 60000, next = SLEEP_MINUTES[0];
+                for (int i = 0; i < SLEEP_MINUTES.length; i++)
+                    if (SLEEP_MINUTES[i] == now) { next = SLEEP_MINUTES[(i + 1) % SLEEP_MINUTES.length]; break; }
+                Settings.Secure.putInt(getContentResolver(), SLEEP_KEY, next == 0 ? -1 : next * 60000);
+                Toast.makeText(this, "Timer para desligar: " + sleepLabel(next), Toast.LENGTH_SHORT).show();
+                return;
+            } catch (Throwable ignored) {}
+        }
+        Intent i = new Intent(Settings.ACTION_DREAM_SETTINGS);
+        if (i.resolveActivity(getPackageManager()) == null) i = new Intent(Settings.ACTION_SETTINGS);
+        try { startActivity(i); } catch (Exception ignored) {}
+    }
+
     private void updateThemeColors() {
         LineIcon.tint = 0xEBFFFFFF;
         if (greetingView != null) greetingView.setTextColor(cMain());
@@ -418,6 +499,10 @@ public class MainActivity extends Activity {
         if (weatherBgDrawable != null) {
             weatherBgDrawable.setColor(cardFill());
             weatherBgDrawable.setStroke(Math.max(1, px(2)), cardStroke());
+        }
+        for (GradientDrawable d : pillBgs) {
+            d.setColor(cardFill());
+            d.setStroke(Math.max(1, px(2)), cardStroke());
         }
         buildTiles();
     }
@@ -510,18 +595,19 @@ public class MainActivity extends Activity {
         compact = false;
 
         // Plain icons at the top right, level with the date: the network icon, then any settings
-        // shortcuts picked (Bluetooth by default). Added last, so the first app keeps first focus; Up from the apps reaches them.
+        // shortcuts picked (Bluetooth by default), then the sleep timer button. Added last, so the first app keeps first focus; Up from the apps reaches them.
         List<Integer> quick = quickList();
         int ib = px(ICON_BUTTON), ig = px(ICON_GAP);
         // The last icon's right edge lines up with the apps' (its focus circle sticks out past them).
         int qx = getResources().getDisplayMetrics().widthPixels - m + (ib - px(ICON_SIZE)) / 2
-                - (quick.size() + 1) * ib - quick.size() * ig;
+                - (quick.size() + 2) * ib - (quick.size() + 1) * ig;
         netIcon = addIcon(NETWORK, "Network", null, qx);
         qx += ib + ig;
         for (int q : quick) {
             addIcon(QUICK + QUICK_NAMES[q], QUICK_LABELS[q], new LineIcon(QUICK_ICONS[q]), qx);
             qx += ib + ig;
         }
+        addIcon(TIMER, "Timer para desligar", new LineIcon(LineIcon.TIMER), qx);
         netState = -1;
         refreshNetwork();
 
@@ -668,6 +754,9 @@ public class MainActivity extends Activity {
             return;
         } else if (NETWORK.equals(key)) {
             openNetworkSettings();
+            return;
+        } else if (TIMER.equals(key)) {
+            onTimerClick();
             return;
         } else if (key.startsWith(QUICK)) {
             openQuick(key.substring(QUICK.length()));
