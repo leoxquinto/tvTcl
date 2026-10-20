@@ -113,7 +113,7 @@ public class MainActivity extends Activity {
 
     private static Typeface regular, semibold;
     private boolean darkTheme = true;
-    private TextView weatherText;
+    private TextView weatherText, rainText;
     private TextView greetingView, dateView, timeView;
     private GradientDrawable weatherBgDrawable;
     private TextView statsText;
@@ -201,7 +201,7 @@ public class MainActivity extends Activity {
         clock.setOrientation(LinearLayout.VERTICAL);
         clock.setGravity(Gravity.START);
         TextClock time = clock("h:mm", "H:mm", px(136), cMain(), regular);
-        time.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+        time.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
         time.setLetterSpacing(-0.02f);
         time.setFontFeatureSettings("tnum");
         time.setIncludeFontPadding(false);
@@ -217,7 +217,7 @@ public class MainActivity extends Activity {
         // The weather is a glass pill at the top right, under the network icon.
         LinearLayout weatherCard = new LinearLayout(this);
         weatherCard.setOrientation(LinearLayout.VERTICAL);
-        weatherCard.setGravity(Gravity.CENTER_VERTICAL);
+        weatherCard.setGravity(Gravity.CENTER);
         weatherCard.setPadding(px(30), px(12), px(30), px(12));
         GradientDrawable weatherBg = new GradientDrawable();
         weatherBg.setCornerRadius(px(36));
@@ -231,13 +231,28 @@ public class MainActivity extends Activity {
         weatherCard.addView(weatherText);
         pillBgs.add(weatherBg);
 
-        // The weather pill is as wide as its text needs (so nothing gets cut), pinned to the right.
-        FrameLayout.LayoutParams weatherLp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
-        weatherLp.topMargin = px(176);
-        weatherLp.rightMargin = px(MARGIN);
-        root.addView(weatherCard, weatherLp);
-        weatherPill = weatherCard;
-        weatherCard.addOnLayoutChangeListener((pillView, left0, top0, right0, bottom0, oldLeft0, oldTop0, oldRight0, oldBottom0) -> {
+        weatherText.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        // The rain pill, in the same style and with the same two lines of text.
+        rainText = text(px(24), cMain(), regular);
+        rainText.setText("Consultando a chuva…");
+        rainText.setMaxLines(2);
+        rainText.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        // Weather above, rain below. The column is as wide as the wider text needs (so nothing gets
+        // cut) and both pills fill it, so they are the same size. Pinned to the right margin.
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.addView(weatherCard, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams belowWeather = new LinearLayout.LayoutParams(-1, -2);
+        belowWeather.topMargin = px(14);
+        column.addView(pillOf(rainText), belowWeather);
+        FrameLayout.LayoutParams columnLp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
+        columnLp.topMargin = px(176);
+        columnLp.rightMargin = px(MARGIN);
+        root.addView(column, columnLp);
+        weatherPill = column;
+        column.addOnLayoutChangeListener((pillView, left0, top0, right0, bottom0, oldLeft0, oldTop0, oldRight0, oldBottom0) -> {
             if (right0 - left0 == pillWidth) return;
             pillWidth = right0 - left0;
             pillView.post(() -> { if (!isDestroyed() && movingKey == null) buildTiles(); });
@@ -411,7 +426,7 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             HttpURLConnection c = null;
             try {
-                URL url = new URL("https://api.open-meteo.com/v1/forecast?latitude=-23.5505&longitude=-46.6333&current=temperature_2m,weather_code&daily=sunrise,sunset&timezone=America%2FSao_Paulo&forecast_days=1");
+                URL url = new URL("https://api.open-meteo.com/v1/forecast?latitude=-23.5505&longitude=-46.6333&current=temperature_2m,weather_code,precipitation&daily=sunrise,sunset,precipitation_probability_max,precipitation_sum&timezone=America%2FSao_Paulo&forecast_days=1");
                 c = (HttpURLConnection) url.openConnection();
                 c.setConnectTimeout(7000); c.setReadTimeout(7000); c.setRequestMethod("GET");
                 InputStream in = c.getInputStream();
@@ -430,15 +445,26 @@ public class MainActivity extends Activity {
                 int setMin = Integer.parseInt(set.substring(11, 13)) * 60 + Integer.parseInt(set.substring(14, 16));
                 getSharedPreferences(PREFS, 0).edit().putInt("rise_min", riseMin).putInt("set_min", setMin).apply();
                 String condition = weatherDescription(code);
+                org.json.JSONArray probs = daily.optJSONArray("precipitation_probability_max");
+                org.json.JSONArray sums = daily.optJSONArray("precipitation_sum");
+                int prob = probs != null && !probs.isNull(0) ? probs.getInt(0) : -1;
+                double sum = sums != null && !sums.isNull(0) ? sums.getDouble(0) : 0;
+                boolean raining = current.optDouble("precipitation", 0) > 0;
+                final String rain = (prob >= 0 ? String.format(PT_BR, "Chuva hoje  ·  %d%% de chance", prob)
+                        : "Chuva hoje  ·  sem previsão")
+                        + String.format(PT_BR, "\nPrevisto %.1f mm  ·  %s", sum, raining ? "Agora: chovendo" : "Agora: sem chuva");
                 runOnUiThread(() -> {
                     if (weatherText != null) weatherText.setText(String.format(Locale.forLanguageTag("pt-BR"),
                             "☀  %.0f°  ·  %s\nSão Paulo  ·  Nascer %s  ·  Pôr %s",
                             temp, condition, rise.substring(11,16), set.substring(11,16)));
+                    if (rainText != null) rainText.setText(rain);
                     applyAutoTheme();
                 });
             } catch (Exception ignored) {
                 runOnUiThread(() -> { if (weatherText != null && weatherText.getText().toString().contains("Consultando"))
-                    weatherText.setText("São Paulo, SP · Clima indisponível"); });
+                    weatherText.setText("São Paulo, SP · Clima indisponível");
+                    if (rainText != null && rainText.getText().toString().contains("Consultando"))
+                        rainText.setText("Chuva hoje  ·  indisponível"); });
             } finally { if (c != null) c.disconnect(); }
         }, "tvdetox-weather").start();
     }
@@ -459,7 +485,7 @@ public class MainActivity extends Activity {
     private View pillOf(TextView text) {
         LinearLayout p = new LinearLayout(this);
         p.setOrientation(LinearLayout.VERTICAL);
-        p.setGravity(Gravity.CENTER_VERTICAL);
+        p.setGravity(Gravity.CENTER);
         p.setPadding(px(30), px(12), px(30), px(12));
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(px(36));
@@ -502,6 +528,7 @@ public class MainActivity extends Activity {
         if (e == 60) return "Feliz Corpus Christi, Leonardo!";
         if (d == 24 && m == 6) return "Feliz São João, Leonardo!";
         if (d == 20 && m == 7) return "Feliz Dia do Amigo, Leonardo!";
+        if (d == 26 && m == 7) return "Feliz Dia dos Avós!";
         if (m == 8 && sunday && d >= 8 && d <= 14) return "Feliz Dia dos Pais!";
         if (d == 7 && m == 9) return "Feliz Dia da Independência, Leonardo!";
         if (d == 12 && m == 10) return "Feliz Dia das Crianças!";
@@ -577,6 +604,7 @@ public class MainActivity extends Activity {
         if (dateView != null) dateView.setTextColor(cSecondary());
         if (timeView != null) timeView.setTextColor(cMain());
         if (weatherText != null) weatherText.setTextColor(cMain());
+        if (rainText != null) rainText.setTextColor(cMain());
         if (moveHint != null) moveHint.setTextColor(cHint());
         if (weatherBgDrawable != null) {
             weatherBgDrawable.setColor(cardFill());
