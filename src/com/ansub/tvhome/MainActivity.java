@@ -100,13 +100,14 @@ public class MainActivity extends Activity {
     private static final int[][] QUICK_ICONS = {LineIcon.BLUETOOTH, LineIcon.SOUND, LineIcon.PICTURE};
     private static final String NETWORK = "network";
     private static final String TIMER = "timer";
+    private static final String CLEAN = "clean";
     private static final int OFFLINE = 0, ETHERNET = 4; // network states; 1 to 3 are Wi-Fi bars
     // TCL keeps its own Picture and Sound panels in a service; Android's Sound page is missing there.
     private static final String TCL_SHOW_WINDOW = "com.tcl.settings.SHOW_WINDOW";
 
     // Layout is designed at 1920x1080 and scaled to the TV's real UI size by px().
     private static final int MARGIN = 96, GAP = 36, RADIUS = 22;
-    private static final int ROW1_TOP = 600, ROW_STEP = 224;
+    private static final int ROW1_TOP = 570, ROW_STEP = 224;
     private static final int GRID_MIN_TOP = 380; // more rows push the grid up, but not into the clock
     private static final int ICON_TOP = 76, ICON_BUTTON = 72, ICON_SIZE = 40, ICON_GAP = 12; // level with the date
     private float scale = 1f;
@@ -117,6 +118,7 @@ public class MainActivity extends Activity {
     private TextView greetingView, dateView, timeView;
     private GradientDrawable weatherBgDrawable;
     private TextView statsText;
+    private View statsPill;
     private final List<GradientDrawable> pillBgs = new ArrayList<>();
     private static final Locale PT_BR = new Locale("pt", "BR");
     private static final String SLEEP_KEY = "sleep_timeout"; // the TV's own sleep timer, in milliseconds
@@ -219,20 +221,16 @@ public class MainActivity extends Activity {
         weatherCard.addView(weatherText);
         pillBgs.add(weatherBg);
 
-        // Two glass pills, one under the other, each as wide as its text needs (so nothing gets
-        // cut), pinned to the right margin: weather, then memory and storage.
-        LinearLayout column = new LinearLayout(this);
-        column.setOrientation(LinearLayout.VERTICAL);
-        column.setGravity(Gravity.END);
-        column.addView(weatherCard, new LinearLayout.LayoutParams(-2, -2));
+        // The weather pill is as wide as its text needs (so nothing gets cut), pinned to the right.
+        FrameLayout.LayoutParams weatherLp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
+        weatherLp.topMargin = px(176);
+        weatherLp.rightMargin = px(MARGIN);
+        root.addView(weatherCard, weatherLp);
+
+        // Memory and storage: a glass pill centered under the dock. buildTiles sets its top.
         statsText = text(px(24), cMain(), regular);
-        LinearLayout.LayoutParams belowStats = new LinearLayout.LayoutParams(-2, -2);
-        belowStats.topMargin = px(14);
-        column.addView(pillOf(statsText), belowStats);
-        FrameLayout.LayoutParams colLp = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END);
-        colLp.topMargin = px(176);
-        colLp.rightMargin = px(MARGIN);
-        root.addView(column, colLp);
+        statsPill = pillOf(statsText);
+        root.addView(statsPill, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
         updateStats();
 
         moveHint = text(px(24), cHint(), regular);
@@ -489,6 +487,39 @@ public class MainActivity extends Activity {
         try { startActivity(i); } catch (Exception ignored) {}
     }
 
+    // Ends the background processes of the apps on the home screen (never this one, never the app in
+    // front), then says how much memory is free. The system may restart some of them on its own.
+    private void cleanMemory() {
+        try {
+            final ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            final ActivityManager.MemoryInfo before = new ActivityManager.MemoryInfo();
+            am.getMemoryInfo(before);
+            PackageManager pm = getPackageManager();
+            java.util.Set<String> pkgs = new java.util.HashSet<>();
+            for (String category : new String[] {Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER}) {
+                Intent main = new Intent(Intent.ACTION_MAIN).addCategory(category);
+                for (android.content.pm.ResolveInfo ri : pm.queryIntentActivities(main, 0))
+                    pkgs.add(ri.activityInfo.packageName);
+            }
+            pkgs.remove(getPackageName());
+            for (String pkg : pkgs) {
+                try { am.killBackgroundProcesses(pkg); } catch (Throwable ignored) {}
+            }
+            Toast.makeText(this, "Encerrando apps em segundo plano…", Toast.LENGTH_SHORT).show();
+            weatherHandler.postDelayed(() -> {
+                ActivityManager.MemoryInfo after = new ActivityManager.MemoryInfo();
+                am.getMemoryInfo(after);
+                long freed = (after.availMem - before.availMem) / (1024 * 1024);
+                Toast.makeText(MainActivity.this, String.format(PT_BR, "RAM livre agora: %d MB%s",
+                        after.availMem / (1024 * 1024), freed > 0 ? " (+" + freed + " MB)" : ""),
+                        Toast.LENGTH_LONG).show();
+                updateStats();
+            }, 1500);
+        } catch (Throwable t) {
+            Toast.makeText(this, "Não foi possível limpar a memória", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void updateThemeColors() {
         LineIcon.tint = 0xEBFFFFFF;
         if (greetingView != null) greetingView.setTextColor(cMain());
@@ -547,7 +578,7 @@ public class MainActivity extends Activity {
         gridTop = Math.max(px(GRID_MIN_TOP), px(ROW1_TOP) - (rows - 1) * px(ROW_STEP));
         int bottomTop = gridTop + rows * px(ROW_STEP);
         ((FrameLayout.LayoutParams) moveHint.getLayoutParams()).topMargin = gridTop - px(64);
-        root.setMinimumHeight(bottomTop + px(30) + px(120) + px(MARGIN));
+        root.setMinimumHeight(bottomTop + px(30) + px(120) + px(16) + px(56) + px(40));
 
         for (String pkg : apps) {
             Intent li = launchIntent(pm, pkg);
@@ -593,14 +624,18 @@ public class MainActivity extends Activity {
         addTile(root, SETTINGS, "Settings", null, LineIcon.SETTINGS, null, x0 + col++ * (cw + cg), ty, cw, ch);
         addTile(root, ADD, "Add app", null, LineIcon.PLUS, null, x0 + col * (cw + cg), ty, cw, ch);
         compact = false;
+        // The memory and storage pill goes right under the dock, centered like it.
+        FrameLayout.LayoutParams sp = (FrameLayout.LayoutParams) statsPill.getLayoutParams();
+        sp.topMargin = dockTop + ch + 2 * pad + px(16);
+        statsPill.setLayoutParams(sp);
 
         // Plain icons at the top right, level with the date: the network icon, then any settings
-        // shortcuts picked (Bluetooth by default), then the sleep timer button. Added last, so the first app keeps first focus; Up from the apps reaches them.
+        // shortcuts picked (Bluetooth by default), then the sleep timer and clean-memory buttons. Added last, so the first app keeps first focus; Up from the apps reaches them.
         List<Integer> quick = quickList();
         int ib = px(ICON_BUTTON), ig = px(ICON_GAP);
         // The last icon's right edge lines up with the apps' (its focus circle sticks out past them).
         int qx = getResources().getDisplayMetrics().widthPixels - m + (ib - px(ICON_SIZE)) / 2
-                - (quick.size() + 2) * ib - (quick.size() + 1) * ig;
+                - (quick.size() + 3) * ib - (quick.size() + 2) * ig;
         netIcon = addIcon(NETWORK, "Network", null, qx);
         qx += ib + ig;
         for (int q : quick) {
@@ -608,6 +643,8 @@ public class MainActivity extends Activity {
             qx += ib + ig;
         }
         addIcon(TIMER, "Timer para desligar", new LineIcon(LineIcon.TIMER), qx);
+        qx += ib + ig;
+        addIcon(CLEAN, "Limpar memória", new LineIcon(LineIcon.TRASH), qx);
         netState = -1;
         refreshNetwork();
 
@@ -757,6 +794,9 @@ public class MainActivity extends Activity {
             return;
         } else if (TIMER.equals(key)) {
             onTimerClick();
+            return;
+        } else if (CLEAN.equals(key)) {
+            cleanMemory();
             return;
         } else if (key.startsWith(QUICK)) {
             openQuick(key.substring(QUICK.length()));
