@@ -117,7 +117,19 @@ public class MainActivity extends Activity {
     private TextView weatherText;
     private TextView greetingView, dateView, timeView;
     private GradientDrawable weatherBgDrawable;
-    private TextView statsText;
+    private TextView statsText, phraseView;
+    // Set these to your birthday to get a special greeting that day (0 = off).
+    private static final int BIRTHDAY_DAY = 0, BIRTHDAY_MONTH = 0;
+    // One phrase per weekday (Sunday first); the week of the month picks which of the three.
+    private static final String[][] WEEK_PHRASES = {
+        {"Domingo é dia de descansar e recarregar.", "Domingo tranquilo, aproveite sem pressa.", "Um domingo bom pede pipoca e sofá."},
+        {"Nova semana, novas conquistas.", "Segunda com calma, um passo de cada vez.", "Comece a semana do seu jeito."},
+        {"Terça de foco e boa energia.", "Terça é dia de fazer acontecer.", "Siga firme, a semana está rendendo."},
+        {"Quarta: metade da semana já foi.", "Quarta é dia de manter o ritmo.", "No meio da semana, respire fundo."},
+        {"Quinta: a sexta já está chegando.", "Quinta é quase sexta, aguente firme.", "Falta pouco para o fim de semana."},
+        {"Sextou! Hora de relaxar.", "Sexta é dia de comemorar a semana.", "Sexta-feira pede um descanso merecido."},
+        {"Sábado é dia de curtir sem culpa.", "Sábado livre: escolha algo bom para assistir.", "Hoje o relógio pode esperar."},
+    };
     private View statsPill;
     private final List<GradientDrawable> pillBgs = new ArrayList<>();
     private static final Locale PT_BR = new Locale("pt", "BR");
@@ -126,7 +138,10 @@ public class MainActivity extends Activity {
     private View dockBg;        // the glass capsule behind the bottom row
     private boolean compact;    // building a slim pill for the dock instead of a big tile
     private final Runnable themeTick = new Runnable() {
-        @Override public void run() { applyAutoTheme(); updateStats(); weatherHandler.postDelayed(this, 60L * 1000L); }
+        @Override public void run() {
+            try { applyAutoTheme(); updateStats(); updateGreeting(); } catch (Throwable ignored) {}
+            weatherHandler.postDelayed(this, 60L * 1000L);
+        }
     };
     private TextClock clockDate, clockTime;
     private final Handler weatherHandler = new Handler(Looper.getMainLooper());
@@ -144,6 +159,13 @@ public class MainActivity extends Activity {
     private TextView moveHint;  // shown above the apps while moving
     private boolean longPressed; // OK was held: swallow the key-up so the app doesn't open
 
+    // The minute ticking, the clock being changed and the screen coming on all re-check day and night,
+    // so the sky changes on time even if the delayed tick above was paused.
+    private final BroadcastReceiver clockChanged = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            try { applyAutoTheme(); updateGreeting(); updateStats(); } catch (Throwable ignored) {}
+        }
+    };
     private final BroadcastReceiver packagesChanged = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent i) { dirty = true; }
     };
@@ -202,6 +224,11 @@ public class MainActivity extends Activity {
         timeView = time;
         clock.addView(time);
         clock.addView(date);
+        phraseView = text(px(26), cSecondary(), regular);
+        glow(phraseView);
+        LinearLayout.LayoutParams phraseLp = new LinearLayout.LayoutParams(-2, -2);
+        phraseLp.topMargin = px(12);
+        clock.addView(phraseView, phraseLp);
         root.addView(clock, at(px(MARGIN), px(96), px(820), -2));
 
         // The weather is a glass pill at the top right, under the network icon.
@@ -231,6 +258,7 @@ public class MainActivity extends Activity {
         statsText = text(px(24), cMain(), regular);
         statsPill = pillOf(statsText);
         root.addView(statsPill, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
+        updateGreeting();
         updateStats();
 
         moveHint = text(px(24), cHint(), regular);
@@ -250,6 +278,12 @@ public class MainActivity extends Activity {
         f.addDataScheme("package");
         if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(packagesChanged, f, Context.RECEIVER_EXPORTED);
         else registerReceiver(packagesChanged, f);
+        IntentFilter clockFilter = new IntentFilter(Intent.ACTION_TIME_TICK);
+        clockFilter.addAction(Intent.ACTION_TIME_CHANGED);
+        clockFilter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+        clockFilter.addAction(Intent.ACTION_SCREEN_ON);
+        if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(clockChanged, clockFilter, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(clockChanged, clockFilter);
 
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm != null) try {
@@ -263,6 +297,7 @@ public class MainActivity extends Activity {
         weatherHandler.removeCallbacks(themeTick);
         weatherHandler.removeCallbacks(weatherRefresh);
         unregisterReceiver(packagesChanged);
+        try { unregisterReceiver(clockChanged); } catch (Exception ignored) {}
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm != null) try { cm.unregisterNetworkCallback(networkChanged); } catch (Exception ignored) {}
         super.onDestroy();
@@ -327,6 +362,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        applyAutoTheme();
         // Rebuild only when apps were installed, removed or updated.
         if (dirty) {
             dirty = false;
@@ -334,6 +370,7 @@ public class MainActivity extends Activity {
         }
         refreshNetwork();
         updateStats();
+        updateGreeting();
         View f = getCurrentFocus();
         if (f == null && !tiles.isEmpty()) tiles.get(0).requestFocus();
     }
@@ -373,12 +410,12 @@ public class MainActivity extends Activity {
     }
 
     private void applyAutoTheme() {
-        if (movingKey != null) return; // don't rebuild the tiles in the middle of a move
         boolean dark = computeDark();
         if (dark == darkTheme) return;
         darkTheme = dark;
         getWindow().setBackgroundDrawable(background());
-        updateThemeColors();
+        getWindow().getDecorView().invalidate();
+        if (movingKey == null) updateThemeColors(); // the tiles wait while one is being moved
     }
 
     private void fetchWeather() {
@@ -443,6 +480,35 @@ public class MainActivity extends Activity {
         p.setBackground(bg);
         p.addView(text);
         return p;
+    }
+
+    // The greeting follows the time of day, and the line under the date follows the weekday and the
+    // week of the month, with a few special days. Refreshed every minute.
+    private void updateGreeting() {
+        if (greetingView == null) return;
+        Calendar c = Calendar.getInstance(TimeZone.getTimeZone("America/Sao_Paulo"));
+        int h = c.get(Calendar.HOUR_OF_DAY), d = c.get(Calendar.DAY_OF_MONTH), m = c.get(Calendar.MONTH) + 1;
+        String hello = h >= 5 && h < 12 ? "Bom dia" : h >= 12 && h < 18 ? "Boa tarde" : "Boa noite";
+        String greeting = hello + ", Leonardo!";
+        String phrase = WEEK_PHRASES[c.get(Calendar.DAY_OF_WEEK) - 1][((d - 1) / 7) % 3];
+        if (d == BIRTHDAY_DAY && m == BIRTHDAY_MONTH) {
+            greeting = "Feliz aniversário, Leonardo!";
+            phrase = "Hoje o dia é todo seu.";
+        } else if (d == 1 && m == 1) {
+            greeting = "Feliz Ano Novo, Leonardo!";
+            phrase = "Que este ano seja leve e cheio de coisas boas.";
+        } else if (d == 25 && m == 12) {
+            greeting = "Feliz Natal, Leonardo!";
+            phrase = "Aproveite o dia ao lado de quem você gosta.";
+        } else if (d == 31 && m == 12) {
+            phrase = "Último dia do ano: hora de agradecer.";
+        } else if (d == 1 && m == 5) {
+            phrase = "Dia do Trabalhador: descanse, você merece.";
+        } else if (d == 7 && m == 9) {
+            phrase = "Feliz Dia da Independência!";
+        }
+        greetingView.setText(greeting);
+        if (phraseView != null) phraseView.setText(phrase);
     }
 
     // Free memory and free storage, refreshed every minute and when the home screen comes back.

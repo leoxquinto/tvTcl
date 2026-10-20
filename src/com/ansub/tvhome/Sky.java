@@ -72,9 +72,9 @@ final class Sky {
         p.setMaskFilter(null);
     }
 
-    // The moon at night, the sun by day, top right.
+    // The moon at night, the sun by day, top middle.
     private static void celestial(Canvas c, Paint p, int w, int h, boolean night) {
-        float cx = w * 0.82f, cy = h * 0.2f, u = w / 1280f;
+        float cx = w * 0.55f, cy = h * 0.17f, u = w / 1280f; // top middle: clear of the clock and the weather pill
         if (night) {
             p.setShader(new RadialGradient(cx, cy, 150 * u, 0x55B8C8FF, 0x00B8C8FF, Shader.TileMode.CLAMP));
             c.drawCircle(cx, cy, 150 * u, p);
