@@ -11,30 +11,64 @@ import android.graphics.RectF;
 import android.graphics.Shader;
 import java.util.Random;
 
-// A day sky and a night sky, with a grey rainy version of each, drawn once into a bitmap: no blur or
-// animation at runtime.
+// A day sky and a night sky, each with looks for rain, overcast, fog and cold weather, drawn once into
+// a bitmap: no blur or animation at runtime.
 final class Sky {
     private Sky() {}
 
-    static Bitmap render(int w, int h, boolean night, boolean rainy) {
+    // Looks, combined with |. RAIN wins over FOG, FOG over CLOUDY, CLOUDY over PARTLY (partly cloudy),
+    // PARTLY over a plain sky; COLD also tints the plain, partly cloudy and cloudy skies.
+    static final int RAIN = 1, CLOUDY = 2, FOG = 4, COLD = 8, PARTLY = 16;
+
+    private static final int[] NORMAL_DAY = {0xFF1659B8, 0xFF2F7FDC, 0xFF63A8EE};
+    private static final int[] NORMAL_NIGHT = {0xFF03050B, 0xFF0A1128, 0xFF18254A};
+    private static final int[] COLD_DAY = {0xFF2B5F94, 0xFF4F86B8, 0xFF86B4D6};
+    private static final int[] COLD_NIGHT = {0xFF020610, 0xFF071A2E, 0xFF0F3552};
+    private static final int[] PARTLY_DAY = {0xFF28508A, 0xFF4A74A8, 0xFF7C9DBF};
+    private static final int[] PARTLY_COLD_DAY = {0xFF254B7E, 0xFF426C9C, 0xFF7392B2};
+    private static final int[] PARTLY_NIGHT = {0xFF03050A, 0xFF090F20, 0xFF131C34};
+    private static final int[] CLOUDY_DAY = {0xFF4F6272, 0xFF6C8092, 0xFF93A4B2};
+    private static final int[] CLOUDY_COLD_DAY = {0xFF435768, 0xFF5F7385, 0xFF8497A8};
+    private static final int[] CLOUDY_NIGHT = {0xFF04060A, 0xFF0B1018, 0xFF151C28};
+    private static final int[] FOG_DAY = {0xFF66788A, 0xFF8394A3, 0xFFA5B3BF};
+    private static final int[] FOG_NIGHT = {0xFF06090E, 0xFF0F151E, 0xFF1B2430};
+    private static final int[] RAINY_DAY = {0xFF3B4E60, 0xFF566D80, 0xFF7B909F};
+    private static final int[] RAINY_NIGHT = {0xFF020307, 0xFF080D18, 0xFF101826};
+
+    private static int[] palette(boolean night, int look) {
+        boolean cold = (look & COLD) != 0;
+        if ((look & RAIN) != 0) return night ? RAINY_NIGHT : RAINY_DAY;
+        if ((look & FOG) != 0) return night ? FOG_NIGHT : FOG_DAY;
+        if ((look & CLOUDY) != 0) return night ? CLOUDY_NIGHT : cold ? CLOUDY_COLD_DAY : CLOUDY_DAY;
+        if ((look & PARTLY) != 0) return night ? PARTLY_NIGHT : cold ? PARTLY_COLD_DAY : PARTLY_DAY;
+        if (cold) return night ? COLD_NIGHT : COLD_DAY;
+        return night ? NORMAL_NIGHT : NORMAL_DAY;
+    }
+
+    static Bitmap render(int w, int h, boolean night, int look) {
         Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(bmp);
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         p.setDither(true);
 
-        int[] colors = rainy ? (night ? new int[] {0xFF020307, 0xFF080D18, 0xFF101826}
-                        : new int[] {0xFF3B4E60, 0xFF566D80, 0xFF7B909F})
-                : night ? new int[] {0xFF03050B, 0xFF0A1128, 0xFF18254A}
-                : new int[] {0xFF1659B8, 0xFF2F7FDC, 0xFF63A8EE};
+        int[] colors = palette(night, look);
         p.setShader(new LinearGradient(0, 0, 0, h, colors, new float[] {0f, 0.55f, 1f}, Shader.TileMode.CLAMP));
         c.drawRect(0, 0, w, h, p);
         p.setShader(null);
 
-        if (rainy) overcast(c, p, w, h, night);
+        boolean rain = (look & RAIN) != 0;
+        if (rain || (look & (CLOUDY | FOG)) != 0) overcast(c, p, w, h, night, rain);
         else {
-            if (night) stars(c, p, w, h); else clouds(c, p, w, h);
+            boolean partly = (look & PARTLY) != 0;
+            if (night) {
+                stars(c, p, w, h);
+                if (partly) clouds(c, p, w, h, true, true); // clouds over some of the stars
+            } else clouds(c, p, w, h, false, partly);
             celestial(c, p, w, h, night);
         }
+        // Mist: all over for fog, only near the ground for cold weather.
+        if ((look & FOG) != 0) haze(c, p, w, h, night, night ? 0x20 : 0x30, night ? 0x44 : 0x66);
+        else if ((look & COLD) != 0 && !rain) haze(c, p, w, h, night, 0x00, night ? 0x2A : 0x38);
 
         // A darker foot, so the labels on the dock stay easy to read.
         p.setShader(new LinearGradient(0, h * 0.6f, 0, h, 0x00000000, 0x66000000, Shader.TileMode.CLAMP));
@@ -43,23 +77,34 @@ final class Sky {
         return bmp;
     }
 
-    // Rain: thick grey clouds all over the top, darker at the very top, like a storm front.
-    private static void overcast(Canvas c, Paint p, int w, int h, boolean night) {
+    // Mist: a pale veil that gets thicker toward the bottom.
+    private static void haze(Canvas c, Paint p, int w, int h, boolean night, int aTop, int aBottom) {
+        int rgb = night ? 0x9FB4C8 : 0xDCE6EE;
+        p.setShader(new LinearGradient(0, 0, 0, h, (aTop << 24) | rgb, (aBottom << 24) | rgb, Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, w, h, p);
+        p.setShader(null);
+    }
+
+    // Thick grey clouds all over the top. With rain they are darker, and the very top gets darker
+    // still, like a storm front.
+    private static void overcast(Canvas c, Paint p, int w, int h, boolean night, boolean storm) {
         float u = w / 1280f;
         p.setMaskFilter(new BlurMaskFilter(26 * u, BlurMaskFilter.Blur.NORMAL));
         float[][] spots = {{0.08f, 0.10f, 1.5f}, {0.30f, 0.20f, 1.7f}, {0.55f, 0.08f, 1.6f}, {0.80f, 0.18f, 1.8f},
                 {0.98f, 0.08f, 1.4f}, {0.18f, 0.42f, 1.4f}, {0.46f, 0.38f, 1.5f}, {0.72f, 0.45f, 1.4f}}; // x, y, size
         for (float[] k : spots) {
             float x = w * k[0], y = h * k[1], s = k[2] * u;
-            p.setColor(night ? 0x3D3A4C62 : 0x66E4EBF0);
+            p.setColor(night ? (storm ? 0x3D3A4C62 : 0x30405468) : (storm ? 0x66E4EBF0 : 0x55EEF2F6));
             c.drawOval(new RectF(x - 150 * s, y - 28 * s, x + 150 * s, y + 28 * s), p);
             c.drawOval(new RectF(x - 90 * s, y - 52 * s, x + 60 * s, y + 8 * s), p);
             c.drawOval(new RectF(x - 10 * s, y - 40 * s, x + 110 * s, y + 10 * s), p);
         }
         p.setMaskFilter(null);
-        p.setShader(new LinearGradient(0, 0, 0, h * 0.4f, night ? 0x66000000 : 0x55101820, 0x00000000, Shader.TileMode.CLAMP));
-        c.drawRect(0, 0, w, h * 0.4f, p);
-        p.setShader(null);
+        if (storm) {
+            p.setShader(new LinearGradient(0, 0, 0, h * 0.4f, night ? 0x66000000 : 0x55101820, 0x00000000, Shader.TileMode.CLAMP));
+            c.drawRect(0, 0, w, h * 0.4f, p);
+            p.setShader(null);
+        }
     }
 
     private static void stars(Canvas c, Paint p, int w, int h) {
@@ -82,14 +127,20 @@ final class Sky {
         }
     }
 
-    private static void clouds(Canvas c, Paint p, int w, int h) {
+    // Scattered clouds. Partly cloudy has more of them, thicker and greyer; at night they are dim and
+    // pass over the stars.
+    private static void clouds(Canvas c, Paint p, int w, int h, boolean night, boolean partly) {
         float u = w / 1280f;
         p.setMaskFilter(new BlurMaskFilter(14 * u, BlurMaskFilter.Blur.NORMAL));
         float[][] spots = {{0.10f, 0.30f, 1.0f}, {0.38f, 0.17f, 0.8f}, {0.62f, 0.40f, 1.2f},
                 {0.90f, 0.52f, 0.9f}, {0.22f, 0.58f, 1.1f}, {0.74f, 0.74f, 1.0f}}; // x, y, size
-        for (float[] k : spots) {
-            float x = w * k[0], y = h * k[1], s = k[2] * u;
-            p.setColor(0x55FFFFFF);
+        float[][] more = {{0.03f, 0.14f, 1.3f}, {0.28f, 0.40f, 1.0f}, {0.50f, 0.58f, 1.3f},
+                {0.82f, 0.22f, 1.1f}, {0.96f, 0.36f, 1.2f}, {0.60f, 0.14f, 0.9f}};
+        int count = spots.length + (partly ? more.length : 0);
+        for (int i = 0; i < count; i++) {
+            float[] k = i < spots.length ? spots[i] : more[i - spots.length];
+            float x = w * k[0], y = h * k[1], s = k[2] * u * (partly ? 1.15f : 1f);
+            p.setColor(night ? 0x2E9AAEC8 : partly ? 0x70E6EDF3 : 0x55FFFFFF);
             c.drawOval(new RectF(x - 120 * s, y - 22 * s, x + 120 * s, y + 22 * s), p);
             c.drawOval(new RectF(x - 70 * s, y - 44 * s, x + 40 * s, y + 6 * s), p);
             c.drawOval(new RectF(x - 10 * s, y - 34 * s, x + 90 * s, y + 8 * s), p);

@@ -117,6 +117,8 @@ public class MainActivity extends Activity {
     private static final boolean RAIN_EFFECT = true; // false = no rain over the sky
     private RainView rainView;
     private boolean rainy;                // the sky on show is the rainy one
+    private static final int COLD_C = 15; // at or below this many degrees the sky gets the cold look
+    private int weatherLook, fetchedLook, forcedLook = -1; // Sky.CLOUDY | Sky.FOG | Sky.COLD; forced = adb test
     private int rainLevel, fetchedRain, forcedRain = -1; // 0 none, 1 light, 2 moderate, 3 heavy; forced = adb test
     private TextView greetingView, dateView, timeView;
     private GradientDrawable weatherBgDrawable;
@@ -346,6 +348,21 @@ public class MainActivity extends Activity {
             forcedRain = f;
             applyRain(fetchedRain);
         }
+        String sky = intent == null ? null : intent.getStringExtra("sky");
+        if (sky != null) { // to try a look: --es sky partly, cloudy, fog, cold, "partly,cold", clear, or auto
+            int f = -1;
+            if (!sky.trim().isEmpty() && !sky.trim().equalsIgnoreCase("auto")) {
+                f = 0;
+                for (String word : sky.toLowerCase().split("[, ]+")) {
+                    if (word.equals("cloudy")) f |= Sky.CLOUDY;
+                    else if (word.equals("partly")) f |= Sky.PARTLY;
+                    else if (word.equals("fog")) f |= Sky.FOG;
+                    else if (word.equals("cold")) f |= Sky.COLD;
+                }
+            }
+            forcedLook = f;
+            applyLook(fetchedLook);
+        }
         String apps = intent == null ? null : intent.getStringExtra("apps");
         String quick = intent == null ? null : intent.getStringExtra("quick");
         if (apps == null && quick == null) return false;
@@ -415,7 +432,7 @@ public class MainActivity extends Activity {
         int dw = getResources().getDisplayMetrics().widthPixels;
         int bw = Math.min(dw > 0 ? dw : 1280, 1280);
         int bh = bw * 9 / 16;
-        return new android.graphics.drawable.BitmapDrawable(getResources(), Sky.render(bw, bh, darkTheme, rainy));
+        return new android.graphics.drawable.BitmapDrawable(getResources(), Sky.render(bw, bh, darkTheme, (rainy ? Sky.RAIN : 0) | weatherLook));
     }
 
     // Palette: text is white on both skies; only the glass gets a touch lighter by day.
@@ -481,7 +498,9 @@ public class MainActivity extends Activity {
                 final int rainNow = code >= 95 || code == 65 || code == 67 || code == 82 ? 3
                         : code == 63 || code == 66 || code == 80 || code == 81 ? 2
                         : (code >= 51 && code <= 57) || code == 61 || raining ? 1 : 0;
-                getSharedPreferences(PREFS, 0).edit().putInt("rain_level", rainNow)
+                final int lookNow = (code == 3 ? Sky.CLOUDY : code == 2 ? Sky.PARTLY : 0) | (code == 45 || code == 48 ? Sky.FOG : 0)
+                        | (temp <= COLD_C ? Sky.COLD : 0);
+                getSharedPreferences(PREFS, 0).edit().putInt("rain_level", rainNow).putInt("sky_look", lookNow)
                         .putLong("rain_at", System.currentTimeMillis()).apply();
                 final String rain = (prob >= 0 ? String.format(PT_BR, "Chuva hoje  ·  %d%% de chance", prob)
                         : "Chuva hoje  ·  sem previsão")
@@ -492,7 +511,9 @@ public class MainActivity extends Activity {
                             temp, condition, rise.substring(11,16), set.substring(11,16)));
                     if (rainText != null) rainText.setText(rain);
                     fetchedRain = rainNow;
+                    fetchedLook = lookNow;
                     applyRain(rainNow);
+                    applyLook(lookNow);
                     applyAutoTheme();
                 });
             } catch (Exception ignored) {
@@ -641,6 +662,21 @@ public class MainActivity extends Activity {
         fetchedRain = age >= 0 && age < 90 * 60 * 1000L ? sp.getInt("rain_level", 0) : 0;
         rainLevel = forcedRain >= 0 ? forcedRain : fetchedRain;
         rainy = RAIN_EFFECT && rainLevel > 0;
+        fetchedLook = age >= 0 && age < 90 * 60 * 1000L ? sp.getInt("sky_look", 0) : 0;
+        weatherLook = forcedLook >= 0 ? forcedLook : fetchedLook;
+    }
+
+    private void refreshSky() {
+        getWindow().setBackgroundDrawable(background());
+        getWindow().getDecorView().invalidate();
+    }
+
+    // Shows the overcast, foggy and/or cold look of the sky (or the adb test look).
+    private void applyLook(int look) {
+        int now = forcedLook >= 0 ? forcedLook : look;
+        if (now == weatherLook) return;
+        weatherLook = now;
+        refreshSky();
     }
 
     // Shows the rainy sky and the falling rain when `level` (or the adb test level) is above 0.
@@ -649,8 +685,7 @@ public class MainActivity extends Activity {
         boolean now = RAIN_EFFECT && rainLevel > 0;
         if (now != rainy) {
             rainy = now;
-            getWindow().setBackgroundDrawable(background());
-            getWindow().getDecorView().invalidate();
+            refreshSky();
         }
         if (rainView != null) rainView.setLevel(now ? rainLevel : 0);
     }
