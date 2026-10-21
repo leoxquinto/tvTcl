@@ -97,17 +97,36 @@ final class Sky {
         p.setMaskFilter(null);
     }
 
-    // A soft glow: the alpha falls off smoothly and reaches the edge flat, so there is no visible rim.
-    private static RadialGradient glow(float cx, float cy, float r, int rgb, int peak) {
-        int n = 10;
+    // A soft glow: the alpha falls off smoothly (the higher the power, the tighter) and reaches the
+    // edge flat, so there is no visible rim.
+    private static RadialGradient glow(float cx, float cy, float r, int rgb, int peak, float power) {
+        int n = 12;
         int[] cols = new int[n + 1];
         float[] pos = new float[n + 1];
         for (int i = 0; i <= n; i++) {
-            float t = i / (float) n, f = (1 - t) * (1 - t) * (1 - t);
+            float t = i / (float) n, f = (float) Math.pow(1 - t, power);
             cols[i] = (Math.round(peak * f) << 24) | (rgb & 0x00FFFFFF);
             pos[i] = t;
         }
         return new RadialGradient(cx, cy, r, cols, pos, Shader.TileMode.CLAMP);
+    }
+
+    // Sun rays: thin tapered wedges, alternately long and short, that start behind the disc and fade
+    // out away from the sun.
+    private static void rays(Canvas c, Paint p, float cx, float cy, float u) {
+        p.setShader(new RadialGradient(cx, cy, 240 * u, 0xB0FFE27A, 0x00FFE27A, Shader.TileMode.CLAMP));
+        int n = 14;
+        for (int i = 0; i < n; i++) {
+            double a = Math.PI * 2 * i / n + 0.12;
+            float r0 = 38 * u, tip = (i % 2 == 0 ? 240 : 170) * u, half = (i % 2 == 0 ? 12 : 8) * u;
+            float dx = (float) Math.cos(a), dy = (float) Math.sin(a);
+            Path ray = new Path();
+            ray.moveTo(cx + dx * r0 - dy * half, cy + dy * r0 + dx * half);
+            ray.lineTo(cx + dx * tip, cy + dy * tip);
+            ray.lineTo(cx + dx * r0 + dy * half, cy + dy * r0 - dx * half);
+            ray.close();
+            c.drawPath(ray, p);
+        }
     }
 
     // The moon at night, the sun by day, top middle. Low enough that the glow isn't cut by the top
@@ -115,7 +134,7 @@ final class Sky {
     private static void celestial(Canvas c, Paint p, int w, int h, boolean night) {
         float cx = w * 0.55f, cy = h * 0.26f, u = w / 1280f;
         if (night) {
-            p.setShader(glow(cx, cy, 190 * u, 0xB8C8FF, 0x70));
+            p.setShader(glow(cx, cy, 190 * u, 0xB8C8FF, 0x70, 3f));
             c.drawCircle(cx, cy, 190 * u, p);
             p.setShader(null);
             Path moon = new Path();
@@ -126,13 +145,16 @@ final class Sky {
             p.setColor(0xFFF4F6FF);
             c.drawPath(moon, p);
         } else {
-            p.setShader(glow(cx, cy, 240 * u, 0xFFF1B8, 0xA0));
-            c.drawCircle(cx, cy, 240 * u, p);
-            p.setShader(glow(cx, cy, 110 * u, 0xFFF8D8, 0xE0));
-            c.drawCircle(cx, cy, 110 * u, p);
+            // A warm halo, soft rays, and a golden disc, so it reads as a sun and not as a white ball.
+            p.setShader(glow(cx, cy, 300 * u, 0xFFE9A0, 0x99, 2f));
+            c.drawCircle(cx, cy, 300 * u, p);
+            p.setShader(glow(cx, cy, 130 * u, 0xFFF3B8, 0xD0, 2f));
+            c.drawCircle(cx, cy, 130 * u, p);
+            rays(c, p, cx, cy, u);
+            p.setShader(new RadialGradient(cx, cy, 52 * u, new int[] {0xFFFFFBE0, 0xFFFFE27A, 0xFFFFB52E},
+                    new float[] {0f, 0.6f, 1f}, Shader.TileMode.CLAMP));
+            c.drawCircle(cx, cy, 52 * u, p);
             p.setShader(null);
-            p.setColor(0xFFFFFAE6);
-            c.drawCircle(cx, cy, 44 * u, p);
         }
     }
 }
