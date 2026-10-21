@@ -770,11 +770,11 @@ public class MainActivity extends Activity {
         // first app keeps first focus; Up from the apps reaches them.
         List<Integer> quick = quickList();
         int ib = px(ICON_BUTTON), ig = px(ICON_GAP);
-        int count = quick.size() + 2;
+        int iconCount = quick.size() + 2;
         int sw = getResources().getDisplayMetrics().widthPixels;
         int pillMid = weatherPill != null && weatherPill.getWidth() > 0
                 ? weatherPill.getLeft() + weatherPill.getWidth() / 2 : sw - m - px(260);
-        int qx = pillMid - (count * ib + (count - 1) * ig) / 2;
+        int qx = pillMid - (iconCount * ib + (iconCount - 1) * ig) / 2;
         netIcon = addIcon(NETWORK, "Network", null, qx);
         qx += ib + ig;
         for (int q : quick) {
