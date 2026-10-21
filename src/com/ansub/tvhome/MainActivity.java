@@ -114,6 +114,10 @@ public class MainActivity extends Activity {
     private static Typeface regular, semibold;
     private boolean darkTheme = true;
     private TextView weatherText, rainText;
+    private static final boolean RAIN_EFFECT = true; // false = no rain over the sky
+    private RainView rainView;
+    private boolean rainy;                // the sky on show is the rainy one
+    private int rainLevel, fetchedRain, forcedRain = -1; // 0 none, 1 light, 2 moderate, 3 heavy; forced = adb test
     private TextView greetingView, dateView, timeView;
     private GradientDrawable weatherBgDrawable;
     private TextView statsText;
@@ -178,6 +182,7 @@ public class MainActivity extends Activity {
         loadFonts();
         scale = getResources().getDisplayMetrics().widthPixels / 1920f;
         darkTheme = computeDark();
+        loadRain();
         LineIcon.tint = 0xEBFFFFFF;
         getWindow().setBackgroundDrawable(background());
 
@@ -189,6 +194,11 @@ public class MainActivity extends Activity {
         root = new FrameLayout(this);
         root.setClipChildren(false);
         scroller.addView(root, new FrameLayout.LayoutParams(-1, -2));
+
+        // The rain goes in first, so it falls behind everything else on the page.
+        rainView = new RainView(this);
+        root.addView(rainView, new FrameLayout.LayoutParams(-1, -1));
+        rainView.setLevel(rainy ? rainLevel : 0);
 
         TextView greeting = text(px(34), cSecondary(), semibold);
         greetingView = greeting;
@@ -297,6 +307,12 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onPause() {
+        if (rainView != null) rainView.setRunning(false);
+        super.onPause();
+    }
+
+    @Override
     protected void onDestroy() {
         weatherHandler.removeCallbacks(themeTick);
         weatherHandler.removeCallbacks(weatherRefresh);
@@ -319,6 +335,17 @@ public class MainActivity extends Activity {
     // When Android kills the home screen in the background, it can start it again with the same old
     // intent; the stamp install.sh sends stops that from undoing changes made on the TV since.
     private boolean saveConfig(Intent intent) {
+        String rain = intent == null ? null : intent.getStringExtra("rain");
+        if (rain != null) { // to try the rain effect: --es rain 1 (light), 2, 3 (heavy), off, or auto
+            rain = rain.trim();
+            int f = -1;
+            if (rain.equalsIgnoreCase("off")) f = 0;
+            else if (!rain.isEmpty() && !rain.equalsIgnoreCase("auto")) {
+                try { f = Math.max(0, Math.min(3, Integer.parseInt(rain))); } catch (NumberFormatException ignored) {}
+            }
+            forcedRain = f;
+            applyRain(fetchedRain);
+        }
         String apps = intent == null ? null : intent.getStringExtra("apps");
         String quick = intent == null ? null : intent.getStringExtra("quick");
         if (apps == null && quick == null) return false;
@@ -366,6 +393,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (rainView != null) rainView.setRunning(true);
         applyAutoTheme();
         // Rebuild only when apps were installed, removed or updated.
         if (dirty) {
@@ -387,7 +415,7 @@ public class MainActivity extends Activity {
         int dw = getResources().getDisplayMetrics().widthPixels;
         int bw = Math.min(dw > 0 ? dw : 1280, 1280);
         int bh = bw * 9 / 16;
-        return new android.graphics.drawable.BitmapDrawable(getResources(), Sky.render(bw, bh, darkTheme));
+        return new android.graphics.drawable.BitmapDrawable(getResources(), Sky.render(bw, bh, darkTheme, rainy));
     }
 
     // Palette: text is white on both skies; only the glass gets a touch lighter by day.
@@ -450,6 +478,11 @@ public class MainActivity extends Activity {
                 int prob = probs != null && !probs.isNull(0) ? probs.getInt(0) : -1;
                 double sum = sums != null && !sums.isNull(0) ? sums.getDouble(0) : 0;
                 boolean raining = current.optDouble("precipitation", 0) > 0;
+                final int rainNow = code >= 95 || code == 65 || code == 67 || code == 82 ? 3
+                        : code == 63 || code == 66 || code == 80 || code == 81 ? 2
+                        : (code >= 51 && code <= 57) || code == 61 || raining ? 1 : 0;
+                getSharedPreferences(PREFS, 0).edit().putInt("rain_level", rainNow)
+                        .putLong("rain_at", System.currentTimeMillis()).apply();
                 final String rain = (prob >= 0 ? String.format(PT_BR, "Chuva hoje  ·  %d%% de chance", prob)
                         : "Chuva hoje  ·  sem previsão")
                         + String.format(PT_BR, "\nPrevisto %.1f mm  ·  %s", sum, raining ? "Agora: chovendo" : "Agora: sem chuva");
@@ -458,6 +491,8 @@ public class MainActivity extends Activity {
                             "☀  %.0f°  ·  %s\nSão Paulo  ·  Nascer %s  ·  Pôr %s",
                             temp, condition, rise.substring(11,16), set.substring(11,16)));
                     if (rainText != null) rainText.setText(rain);
+                    fetchedRain = rainNow;
+                    applyRain(rainNow);
                     applyAutoTheme();
                 });
             } catch (Exception ignored) {
@@ -596,6 +631,28 @@ public class MainActivity extends Activity {
         } catch (Throwable t) {
             Toast.makeText(this, "Não foi possível limpar a memória", Toast.LENGTH_SHORT).show();
         }
+    }
+
+    // The cached rain from the last weather check (if it is under 90 minutes old), so the sky is right
+    // at start without waiting for the network.
+    private void loadRain() {
+        SharedPreferences sp = getSharedPreferences(PREFS, 0);
+        long age = System.currentTimeMillis() - sp.getLong("rain_at", 0);
+        fetchedRain = age >= 0 && age < 90 * 60 * 1000L ? sp.getInt("rain_level", 0) : 0;
+        rainLevel = forcedRain >= 0 ? forcedRain : fetchedRain;
+        rainy = RAIN_EFFECT && rainLevel > 0;
+    }
+
+    // Shows the rainy sky and the falling rain when `level` (or the adb test level) is above 0.
+    private void applyRain(int level) {
+        rainLevel = forcedRain >= 0 ? forcedRain : level;
+        boolean now = RAIN_EFFECT && rainLevel > 0;
+        if (now != rainy) {
+            rainy = now;
+            getWindow().setBackgroundDrawable(background());
+            getWindow().getDecorView().invalidate();
+        }
+        if (rainView != null) rainView.setLevel(now ? rainLevel : 0);
     }
 
     private void updateThemeColors() {

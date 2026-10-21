@@ -11,30 +11,55 @@ import android.graphics.RectF;
 import android.graphics.Shader;
 import java.util.Random;
 
-// A day sky and a night sky, each drawn once into a bitmap: no blur or animation at runtime.
+// A day sky and a night sky, with a grey rainy version of each, drawn once into a bitmap: no blur or
+// animation at runtime.
 final class Sky {
     private Sky() {}
 
-    static Bitmap render(int w, int h, boolean night) {
+    static Bitmap render(int w, int h, boolean night, boolean rainy) {
         Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(bmp);
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         p.setDither(true);
 
-        int[] colors = night ? new int[] {0xFF03050B, 0xFF0A1128, 0xFF18254A}
+        int[] colors = rainy ? (night ? new int[] {0xFF020307, 0xFF080D18, 0xFF101826}
+                        : new int[] {0xFF3B4E60, 0xFF566D80, 0xFF7B909F})
+                : night ? new int[] {0xFF03050B, 0xFF0A1128, 0xFF18254A}
                 : new int[] {0xFF1659B8, 0xFF2F7FDC, 0xFF63A8EE};
         p.setShader(new LinearGradient(0, 0, 0, h, colors, new float[] {0f, 0.55f, 1f}, Shader.TileMode.CLAMP));
         c.drawRect(0, 0, w, h, p);
         p.setShader(null);
 
-        if (night) stars(c, p, w, h); else clouds(c, p, w, h);
-        celestial(c, p, w, h, night);
+        if (rainy) overcast(c, p, w, h, night);
+        else {
+            if (night) stars(c, p, w, h); else clouds(c, p, w, h);
+            celestial(c, p, w, h, night);
+        }
 
         // A darker foot, so the labels on the dock stay easy to read.
         p.setShader(new LinearGradient(0, h * 0.6f, 0, h, 0x00000000, 0x66000000, Shader.TileMode.CLAMP));
         c.drawRect(0, h * 0.6f, w, h, p);
         p.setShader(null);
         return bmp;
+    }
+
+    // Rain: thick grey clouds all over the top, darker at the very top, like a storm front.
+    private static void overcast(Canvas c, Paint p, int w, int h, boolean night) {
+        float u = w / 1280f;
+        p.setMaskFilter(new BlurMaskFilter(26 * u, BlurMaskFilter.Blur.NORMAL));
+        float[][] spots = {{0.08f, 0.10f, 1.5f}, {0.30f, 0.20f, 1.7f}, {0.55f, 0.08f, 1.6f}, {0.80f, 0.18f, 1.8f},
+                {0.98f, 0.08f, 1.4f}, {0.18f, 0.42f, 1.4f}, {0.46f, 0.38f, 1.5f}, {0.72f, 0.45f, 1.4f}}; // x, y, size
+        for (float[] k : spots) {
+            float x = w * k[0], y = h * k[1], s = k[2] * u;
+            p.setColor(night ? 0x3D3A4C62 : 0x66E4EBF0);
+            c.drawOval(new RectF(x - 150 * s, y - 28 * s, x + 150 * s, y + 28 * s), p);
+            c.drawOval(new RectF(x - 90 * s, y - 52 * s, x + 60 * s, y + 8 * s), p);
+            c.drawOval(new RectF(x - 10 * s, y - 40 * s, x + 110 * s, y + 10 * s), p);
+        }
+        p.setMaskFilter(null);
+        p.setShader(new LinearGradient(0, 0, 0, h * 0.4f, night ? 0x66000000 : 0x55101820, 0x00000000, Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, w, h * 0.4f, p);
+        p.setShader(null);
     }
 
     private static void stars(Canvas c, Paint p, int w, int h) {
