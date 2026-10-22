@@ -100,6 +100,7 @@ public class MainActivity extends Activity {
     private static final int[][] QUICK_ICONS = {LineIcon.BLUETOOTH, LineIcon.SOUND, LineIcon.PICTURE};
     private static final String NETWORK = "network";
     private static final String CLEAN = "clean";
+    private static final String RESTART = "restart";
     private static final int OFFLINE = 0, ETHERNET = 4; // network states; 1 to 3 are Wi-Fi bars
     // TCL keeps its own Picture and Sound panels in a service; Android's Sound page is missing there.
     private static final String TCL_SHOW_WINDOW = "com.tcl.settings.SHOW_WINDOW";
@@ -133,14 +134,19 @@ public class MainActivity extends Activity {
     private boolean compact;    // building a slim pill for the dock instead of a big tile
     private final Runnable themeTick = new Runnable() {
         @Override public void run() {
-            try { applyAutoTheme(); updateStats(); updateGreeting(); } catch (Throwable ignored) {}
+            try { applyAutoTheme(); updateStats(); updateGreeting(); refreshWeatherIfDue(); } catch (Throwable ignored) {}
             weatherHandler.postDelayed(this, 60L * 1000L);
         }
     };
     private TextClock clockDate, clockTime;
     private final Handler weatherHandler = new Handler(Looper.getMainLooper());
+    private static final long WEATHER_EVERY_MS = 15L * 60L * 1000L;
+    private long lastWeatherTry; // SystemClock.elapsedRealtime() of the last try (it also counts standby)
     private final Runnable weatherRefresh = new Runnable() {
-        @Override public void run() { fetchWeather(); weatherHandler.postDelayed(this, 30L * 60L * 1000L); }
+        @Override public void run() {
+            try { refreshWeatherIfDue(); } catch (Throwable ignored) {}
+            weatherHandler.postDelayed(this, WEATHER_EVERY_MS);
+        }
     };
 
     private FrameLayout root; // the page, inside a vertical scroller
@@ -157,7 +163,7 @@ public class MainActivity extends Activity {
     // so the sky changes on time even if the delayed tick above was paused.
     private final BroadcastReceiver clockChanged = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            try { applyAutoTheme(); updateGreeting(); updateStats(); } catch (Throwable ignored) {}
+            try { applyAutoTheme(); updateGreeting(); updateStats(); refreshWeatherIfDue(); } catch (Throwable ignored) {}
         }
     };
     private final BroadcastReceiver packagesChanged = new BroadcastReceiver() {
@@ -283,8 +289,8 @@ public class MainActivity extends Activity {
         root.addView(moveHint, at(px(MARGIN), px(ROW1_TOP - 64), -2, -2));
 
         setContentView(scroller);
-        fetchWeather();
-        weatherHandler.postDelayed(weatherRefresh, 30L * 60L * 1000L);
+        refreshWeatherIfDue();
+        weatherHandler.postDelayed(weatherRefresh, WEATHER_EVERY_MS);
         weatherHandler.postDelayed(themeTick, 60L * 1000L);
 
         IntentFilter f = new IntentFilter();
@@ -412,6 +418,7 @@ public class MainActivity extends Activity {
         super.onResume();
         if (rainView != null) rainView.setRunning(true);
         applyAutoTheme();
+        refreshWeatherIfDue();
         // Rebuild only when apps were installed, removed or updated.
         if (dirty) {
             dirty = false;
@@ -467,13 +474,33 @@ public class MainActivity extends Activity {
         if (movingKey == null) updateThemeColors(); // the tiles wait while one is being moved
     }
 
+    // Checks the weather and the rain again if the last try was 15 minutes ago or more. The timer, the
+    // minute tick, the screen coming on and the home screen coming back all call this, so whichever
+    // runs first does the work and the pills never wait for a restart.
+    private void refreshWeatherIfDue() {
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (lastWeatherTry != 0 && now - lastWeatherTry < WEATHER_EVERY_MS) return;
+        lastWeatherTry = now;
+        fetchWeather();
+    }
+
     private void fetchWeather() {
         new Thread(() -> {
+            if (fetchWeatherOnce()) return;
+            try { Thread.sleep(4000); } catch (InterruptedException ignored) {}
+            if (!fetchWeatherOnce()) // still no luck: try again in 3 minutes, not in 15
+                lastWeatherTry = android.os.SystemClock.elapsedRealtime() - WEATHER_EVERY_MS + 3 * 60 * 1000L;
+        }, "tvdetox-weather").start();
+    }
+
+    private boolean fetchWeatherOnce() {
             HttpURLConnection c = null;
             try {
                 URL url = new URL("https://api.open-meteo.com/v1/forecast?latitude=-23.5505&longitude=-46.6333&current=temperature_2m,weather_code,precipitation&daily=sunrise,sunset,precipitation_probability_max,precipitation_sum&timezone=America%2FSao_Paulo&forecast_days=1");
                 c = (HttpURLConnection) url.openConnection();
                 c.setConnectTimeout(7000); c.setReadTimeout(7000); c.setRequestMethod("GET");
+                c.setRequestProperty("Connection", "close");
+                c.setUseCaches(false);
                 InputStream in = c.getInputStream();
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 byte[] buf = new byte[2048]; int n;
@@ -516,18 +543,21 @@ public class MainActivity extends Activity {
                     applyLook(lookNow);
                     applyAutoTheme();
                 });
+                return true;
             } catch (Exception ignored) {
                 runOnUiThread(() -> { if (weatherText != null && weatherText.getText().toString().contains("Consultando"))
                     weatherText.setText("São Paulo, SP · Clima indisponível");
                     if (rainText != null && rainText.getText().toString().contains("Consultando"))
                         rainText.setText("Chuva hoje  ·  indisponível"); });
+                return false;
             } finally { if (c != null) c.disconnect(); }
-        }, "tvdetox-weather").start();
     }
 
     private String weatherDescription(int code) {
         if (code == 0) return "Ensolarado";
-        if (code <= 3) return "Parcialmente nublado";
+        if (code == 1) return "Poucas nuvens";
+        if (code == 2) return "Parcialmente nublado";
+        if (code == 3) return "Nublado";
         if (code <= 48) return "Neblina";
         if (code <= 67) return "Chuva";
         if (code <= 77) return "Neve";
@@ -619,6 +649,71 @@ public class MainActivity extends Activity {
             statsText.setText(String.format(PT_BR, "RAM livre %d MB  ·  Armazenamento livre %.1f GB",
                     mi.availMem / (1024 * 1024), fs.getAvailableBytes() / 1073741824.0));
         } catch (Throwable ignored) {}
+    }
+
+    // Asks first, with Cancel selected, so a stray press does not restart the TV.
+    private void confirmRestart() {
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
+                .setTitle("Reiniciar a TV?")
+                .setMessage("A TV vai desligar e ligar de novo. Na primeira vez, aceite o pedido de autorização "
+                        + "de depuração que aparecer na tela, marcando \u201cSempre permitir\u201d.")
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Reiniciar", (d, which) -> restartTv())
+                .create();
+        dialog.show();
+        android.widget.Button cancel = dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE);
+        if (cancel != null) cancel.requestFocus();
+    }
+
+    // An app without system rights can't restart the TV, so this runs `reboot` through the TV's own adb
+    // daemon (network debugging, port 5555), as `adb shell reboot` does from a computer. See AdbShell.
+    private void restartTv() {
+        Toast.makeText(this, "Reiniciando a TV… se pedir autorização, aceite com “Sempre permitir”", Toast.LENGTH_LONG).show();
+        new Thread(() -> {
+            try {
+                java.security.KeyPair key = adbKey();
+                java.util.List<String> hosts = new ArrayList<>();
+                hosts.add("127.0.0.1");
+                try {
+                    for (java.net.NetworkInterface ni : java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces()))
+                        for (java.net.InetAddress a : java.util.Collections.list(ni.getInetAddresses()))
+                            if (!a.isLoopbackAddress() && a instanceof java.net.Inet4Address) hosts.add(a.getHostAddress());
+                } catch (Exception ignored) {}
+                Exception last = null;
+                for (String host : hosts) {
+                    try {
+                        AdbShell.run(host, 5555, key.getPrivate(), key.getPublic(), "reboot", 60000);
+                        return;
+                    } catch (Exception e) {
+                        last = e;
+                        if (String.valueOf(e.getMessage()).contains("autoriza")) break; // denied: no point in trying more
+                    }
+                }
+                final String why = last == null ? "" : String.valueOf(last.getMessage());
+                runOnUiThread(() -> Toast.makeText(this, "Não consegui reiniciar (" + why + "). Ative a depuração de rede "
+                        + "nas opções do desenvolvedor da TV.", Toast.LENGTH_LONG).show());
+            } catch (Throwable t) {
+                runOnUiThread(() -> Toast.makeText(this, "Não consegui reiniciar a TV", Toast.LENGTH_LONG).show());
+            }
+        }, "tvdetox-restart").start();
+    }
+
+    // The key this app uses with adb: made once and kept, so the TV only asks to allow it the first time.
+    private java.security.KeyPair adbKey() throws Exception {
+        SharedPreferences sp = getSharedPreferences(PREFS, 0);
+        String priv = sp.getString("adb_priv", null), pub = sp.getString("adb_pub", null);
+        java.security.KeyFactory kf = java.security.KeyFactory.getInstance("RSA");
+        if (priv != null && pub != null) {
+            try {
+                return new java.security.KeyPair(
+                        kf.generatePublic(new java.security.spec.X509EncodedKeySpec(android.util.Base64.decode(pub, 0))),
+                        kf.generatePrivate(new java.security.spec.PKCS8EncodedKeySpec(android.util.Base64.decode(priv, 0))));
+            } catch (Exception ignored) {} // unreadable: make a new one
+        }
+        java.security.KeyPair k = AdbShell.newKey();
+        sp.edit().putString("adb_priv", android.util.Base64.encodeToString(k.getPrivate().getEncoded(), android.util.Base64.NO_WRAP))
+                .putString("adb_pub", android.util.Base64.encodeToString(k.getPublic().getEncoded(), android.util.Base64.NO_WRAP)).apply();
+        return k;
     }
 
     // Ends the background processes of the apps on the home screen (never this one, never the app in
@@ -801,11 +896,11 @@ public class MainActivity extends Activity {
         statsPill.setLayoutParams(sp);
 
         // Plain icons, centered right above the weather pill: the network icon, then any settings
-        // shortcuts picked (Bluetooth by default), then the clean-memory button. Added last, so the
+        // shortcuts picked (Bluetooth by default), then the clean-memory and restart buttons. Added last, so the
         // first app keeps first focus; Up from the apps reaches them.
         List<Integer> quick = quickList();
         int ib = px(ICON_BUTTON), ig = px(ICON_GAP);
-        int iconCount = quick.size() + 2;
+        int iconCount = quick.size() + 3;
         int sw = getResources().getDisplayMetrics().widthPixels;
         int pillMid = weatherPill != null && weatherPill.getWidth() > 0
                 ? weatherPill.getLeft() + weatherPill.getWidth() / 2 : sw - m - px(260);
@@ -817,6 +912,8 @@ public class MainActivity extends Activity {
             qx += ib + ig;
         }
         addIcon(CLEAN, "Limpar memória", new LineIcon(LineIcon.TRASH), qx);
+        qx += ib + ig;
+        addIcon(RESTART, "Reiniciar a TV", new LineIcon(LineIcon.RESTART), qx);
         netState = -1;
         refreshNetwork();
 
@@ -966,6 +1063,9 @@ public class MainActivity extends Activity {
             return;
         } else if (CLEAN.equals(key)) {
             cleanMemory();
+            return;
+        } else if (RESTART.equals(key)) {
+            confirmRestart();
             return;
         } else if (key.startsWith(QUICK)) {
             openQuick(key.substring(QUICK.length()));

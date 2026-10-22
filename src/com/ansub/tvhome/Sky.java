@@ -26,26 +26,26 @@ final class Sky {
     private static final int[] COLD_NIGHT = {0xFF020610, 0xFF071A2E, 0xFF0F3552};
     private static final int[] PARTLY_DAY = {0xFF28508A, 0xFF4A74A8, 0xFF7C9DBF};
     private static final int[] PARTLY_COLD_DAY = {0xFF254B7E, 0xFF426C9C, 0xFF7392B2};
-    private static final int[] PARTLY_NIGHT = {0xFF03050A, 0xFF090F20, 0xFF131C34};
     private static final int[] CLOUDY_DAY = {0xFF4F6272, 0xFF6C8092, 0xFF93A4B2};
     private static final int[] CLOUDY_COLD_DAY = {0xFF435768, 0xFF5F7385, 0xFF8497A8};
-    private static final int[] CLOUDY_NIGHT = {0xFF04060A, 0xFF0B1018, 0xFF151C28};
     private static final int[] FOG_DAY = {0xFF66788A, 0xFF8394A3, 0xFFA5B3BF};
-    private static final int[] FOG_NIGHT = {0xFF06090E, 0xFF0F151E, 0xFF1B2430};
     private static final int[] RAINY_DAY = {0xFF3B4E60, 0xFF566D80, 0xFF7B909F};
     private static final int[] RAINY_NIGHT = {0xFF020307, 0xFF080D18, 0xFF101826};
 
     private static int[] palette(boolean night, int look) {
         boolean cold = (look & COLD) != 0;
         if ((look & RAIN) != 0) return night ? RAINY_NIGHT : RAINY_DAY;
-        if ((look & FOG) != 0) return night ? FOG_NIGHT : FOG_DAY;
-        if ((look & CLOUDY) != 0) return night ? CLOUDY_NIGHT : cold ? CLOUDY_COLD_DAY : CLOUDY_DAY;
-        if ((look & PARTLY) != 0) return night ? PARTLY_NIGHT : cold ? PARTLY_COLD_DAY : PARTLY_DAY;
+        if ((look & FOG) != 0) return FOG_DAY;
+        if ((look & CLOUDY) != 0) return cold ? CLOUDY_COLD_DAY : CLOUDY_DAY;
+        if ((look & PARTLY) != 0) return cold ? PARTLY_COLD_DAY : PARTLY_DAY;
         if (cold) return night ? COLD_NIGHT : COLD_DAY;
         return night ? NORMAL_NIGHT : NORMAL_DAY;
     }
 
     static Bitmap render(int w, int h, boolean night, int look) {
+        // At night the stars and the moon are the point: no clouds, partly cloudy or fog then. Rain still
+        // gets its dark sky, and the cold only tints it.
+        if (night) look &= ~(CLOUDY | FOG | PARTLY);
         Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(bmp);
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -59,16 +59,12 @@ final class Sky {
         boolean rain = (look & RAIN) != 0;
         if (rain || (look & (CLOUDY | FOG)) != 0) overcast(c, p, w, h, night, rain);
         else {
-            boolean partly = (look & PARTLY) != 0;
-            if (night) {
-                stars(c, p, w, h);
-                if (partly) clouds(c, p, w, h, true, true); // clouds over some of the stars
-            } else clouds(c, p, w, h, false, partly);
+            if (night) stars(c, p, w, h); else clouds(c, p, w, h, false, (look & PARTLY) != 0);
             celestial(c, p, w, h, night);
         }
         // Mist: all over for fog, only near the ground for cold weather.
         if ((look & FOG) != 0) haze(c, p, w, h, night, night ? 0x20 : 0x30, night ? 0x44 : 0x66);
-        else if ((look & COLD) != 0 && !rain) haze(c, p, w, h, night, 0x00, night ? 0x2A : 0x38);
+        else if ((look & COLD) != 0 && !rain && !night) haze(c, p, w, h, night, 0x00, 0x38);
 
         // A darker foot, so the labels on the dock stay easy to read.
         p.setShader(new LinearGradient(0, h * 0.6f, 0, h, 0x00000000, 0x66000000, Shader.TileMode.CLAMP));
@@ -127,8 +123,7 @@ final class Sky {
         }
     }
 
-    // Scattered clouds. Partly cloudy has more of them, thicker and greyer; at night they are dim and
-    // pass over the stars.
+    // Scattered clouds by day. Partly cloudy has more of them, thicker and greyer.
     private static void clouds(Canvas c, Paint p, int w, int h, boolean night, boolean partly) {
         float u = w / 1280f;
         p.setMaskFilter(new BlurMaskFilter(14 * u, BlurMaskFilter.Blur.NORMAL));
@@ -140,7 +135,7 @@ final class Sky {
         for (int i = 0; i < count; i++) {
             float[] k = i < spots.length ? spots[i] : more[i - spots.length];
             float x = w * k[0], y = h * k[1], s = k[2] * u * (partly ? 1.15f : 1f);
-            p.setColor(night ? 0x2E9AAEC8 : partly ? 0x70E6EDF3 : 0x55FFFFFF);
+            p.setColor(partly ? 0x70E6EDF3 : 0x55FFFFFF);
             c.drawOval(new RectF(x - 120 * s, y - 22 * s, x + 120 * s, y + 22 * s), p);
             c.drawOval(new RectF(x - 70 * s, y - 44 * s, x + 40 * s, y + 6 * s), p);
             c.drawOval(new RectF(x - 10 * s, y - 34 * s, x + 90 * s, y + 8 * s), p);
@@ -162,18 +157,18 @@ final class Sky {
         return new RadialGradient(cx, cy, r, cols, pos, Shader.TileMode.CLAMP);
     }
 
-    // The moon at night, top middle (there is no sun by day). Low enough that the glow isn't cut by the
-    // top of the screen, and clear of the clock and the weather pill.
+    // The moon at night, top middle (there is no sun by day). Low enough that its whole glow fits on
+    // the screen, and clear of the clock and the weather pills.
     private static void celestial(Canvas c, Paint p, int w, int h, boolean night) {
-        float cx = w * 0.55f, cy = h * 0.26f, u = w / 1280f;
+        float cx = w * 0.50f, cy = h * 0.36f, u = w / 1280f;
         if (night) {
-            p.setShader(glow(cx, cy, 190 * u, 0xB8C8FF, 0x70, 3f));
-            c.drawCircle(cx, cy, 190 * u, p);
+            p.setShader(glow(cx, cy, 165 * u, 0xB8C8FF, 0x70, 3f));
+            c.drawCircle(cx, cy, 165 * u, p);
             p.setShader(null);
             Path moon = new Path();
-            moon.addCircle(cx, cy, 42 * u, Path.Direction.CW);
+            moon.addCircle(cx, cy, 46 * u, Path.Direction.CW);
             Path cut = new Path();
-            cut.addCircle(cx + 20 * u, cy - 12 * u, 38 * u, Path.Direction.CW);
+            cut.addCircle(cx + 22 * u, cy - 13 * u, 41.5f * u, Path.Direction.CW);
             moon.op(cut, Path.Op.DIFFERENCE);
             p.setColor(0xFFF4F6FF);
             c.drawPath(moon, p);
