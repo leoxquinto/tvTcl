@@ -119,6 +119,7 @@ public class MainActivity extends Activity {
     private RainView rainView;
     private boolean rainy;                // the sky on show is the rainy one
     private static final int COLD_C = 15; // at or below this many degrees the sky gets the cold look
+    private int forcedTheme = -1; // 0 day, 1 night: set with adb to try the look (-1 = follow the sun)
     private int weatherLook, fetchedLook, forcedLook = -1; // Sky.CLOUDY | Sky.FOG | Sky.COLD; forced = adb test
     private int rainLevel, fetchedRain, forcedRain = -1; // 0 none, 1 light, 2 moderate, 3 heavy; forced = adb test
     private TextView greetingView, dateView, timeView;
@@ -354,6 +355,12 @@ public class MainActivity extends Activity {
             forcedRain = f;
             applyRain(fetchedRain);
         }
+        String theme = intent == null ? null : intent.getStringExtra("theme");
+        if (theme != null) { // to try day or night: --es theme night, day, or auto
+            String word = theme.trim().toLowerCase();
+            forcedTheme = word.equals("night") || word.equals("noite") ? 1 : word.equals("day") || word.equals("dia") ? 0 : -1;
+            if (root != null) applyAutoTheme(); // not yet while the page is still being built at start
+        }
         String sky = intent == null ? null : intent.getStringExtra("sky");
         if (sky != null) { // to try a look: --es sky partly, cloudy, fog, cold, "partly,cold", clear, or auto
             int f = -1;
@@ -458,6 +465,7 @@ public class MainActivity extends Activity {
     // Day or night from the cached sunrise and sunset (minutes of the day), so it works offline and
     // right at start. Without a cache yet it assumes 6:00 to 18:00.
     private boolean computeDark() {
+        if (forcedTheme >= 0) return forcedTheme == 1;
         SharedPreferences sp = getSharedPreferences(PREFS, 0);
         int rise = sp.getInt("rise_min", 6 * 60), set = sp.getInt("set_min", 18 * 60);
         Calendar c = Calendar.getInstance(TimeZone.getTimeZone("America/Sao_Paulo"));
