@@ -115,6 +115,14 @@ public class MainActivity extends Activity {
     private static Typeface regular, semibold;
     private boolean darkTheme = true;
     private TextView weatherText, rainText;
+    // Devices on the HDMI ports: the port number, and the name, icon and colour shown instead of "HDMI n".
+    // A port that isn't listed here (or an input you renamed) stays as the TV names it.
+    private static final int[] DEVICE_PORT = {1, 2};
+    private static final String[] DEVICE_NAME = {"PlayStation 5", "Fire TV"};
+    private static final int[][] DEVICE_ICON = {LineIcon.GAMEPAD, LineIcon.FLAME};
+    private static final int[] DEVICE_TINT = {0x0070D1, 0xFF9900};
+    private static final java.util.regex.Pattern HDMI_PORT = java.util.regex.Pattern.compile("(?i)hdmi\\s*(\\d)");
+    private int tintRgb; // colour of the glass tile being built (0 = none)
     private static final boolean RAIN_EFFECT = true; // false = no rain over the sky
     private RainView rainView;
     private boolean rainy;                // the sky on show is the rainy one
@@ -458,6 +466,19 @@ public class MainActivity extends Activity {
     private int glassColor(boolean focused) {
         if (darkTheme) return focused ? 0x4DFFFFFF : 0x1FFFFFFF;
         return focused ? 0x73FFFFFF : 0x38FFFFFF;
+    }
+    // Which device (an index into DEVICE_*) sits on the input called `label`, or -1.
+    private static int deviceFor(String label) {
+        java.util.regex.Matcher m = HDMI_PORT.matcher(label);
+        if (!m.find()) return -1;
+        int port = m.group(1).charAt(0) - '0';
+        for (int i = 0; i < DEVICE_PORT.length; i++) if (DEVICE_PORT[i] == port) return i;
+        return -1;
+    }
+    private static int tintFill(int rgb, boolean focused) { return ((focused ? 0xBF : 0x8C) << 24) | rgb; }
+    private static int tintStroke(int rgb) {
+        int r = Math.min(255, (rgb >> 16 & 255) + 90), g = Math.min(255, (rgb >> 8 & 255) + 90), b = Math.min(255, (rgb & 255) + 90);
+        return 0xB0000000 | r << 16 | g << 8 | b;
     }
     private int focusCircle() { return darkTheme ? 0x40FFFFFF : 0x59FFFFFF; }
     private void glow(TextView t) { t.setShadowLayer(px(10), 0, px(2), 0x66000000); }
@@ -893,8 +914,14 @@ public class MainActivity extends Activity {
         int col = 0, ty = dockTop + pad;
         if (store)
             addTile(root, PLAY_STORE, "Play Store", null, LineIcon.PLAY, null, x0 + col++ * (cw + cg), ty, cw, ch);
-        for (TvInputInfo in : inputs)
-            addTile(root, in.getId(), inputLabel(in), null, LineIcon.HDMI, null, x0 + col++ * (cw + cg), ty, cw, ch);
+        for (TvInputInfo in : inputs) {
+            String inputName = inputLabel(in);
+            int device = deviceFor(inputName);
+            tintRgb = device >= 0 ? DEVICE_TINT[device] : 0;
+            addTile(root, in.getId(), device >= 0 ? DEVICE_NAME[device] : inputName, null,
+                    device >= 0 ? DEVICE_ICON[device] : LineIcon.HDMI, null, x0 + col++ * (cw + cg), ty, cw, ch);
+            tintRgb = 0;
+        }
         addTile(root, SETTINGS, "Settings", null, LineIcon.SETTINGS, null, x0 + col++ * (cw + cg), ty, cw, ch);
         addTile(root, ADD, "Add app", null, LineIcon.PLUS, null, x0 + col * (cw + cg), ty, cw, ch);
         compact = false;
@@ -935,6 +962,7 @@ public class MainActivity extends Activity {
                          int x, int y, int w, int h) {
         FrameLayout card = new FrameLayout(this);
         final GradientDrawable bg = new GradientDrawable();
+        final int tint = tintRgb; // a device pill on the dock gets its own colour
         bg.setCornerRadius(compact ? h / 2f : px(RADIUS));
         if (banner != null) {
             // Nearly clear: banners with their own rounded corners show the sky there, not black.
@@ -944,8 +972,8 @@ public class MainActivity extends Activity {
             card.addView(iv, new FrameLayout.LayoutParams(-1, -1));
         } else {
             // Quiet "glass" tile: icon above label.
-            bg.setColor(glassColor(false));
-            bg.setStroke(Math.max(1, px(2)), cardStroke());
+            bg.setColor(tint != 0 ? tintFill(tint, false) : glassColor(false));
+            bg.setStroke(Math.max(1, px(2)), tint != 0 ? tintStroke(tint) : cardStroke());
             LinearLayout inner = new LinearLayout(this);
             inner.setOrientation(compact ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
             inner.setGravity(Gravity.CENTER);
@@ -959,7 +987,7 @@ public class MainActivity extends Activity {
             t.setSingleLine(true);
             t.setEllipsize(android.text.TextUtils.TruncateAt.END);
             t.setGravity(Gravity.CENTER);
-            t.setPadding(px(16), 0, px(16), 0);
+            t.setPadding(compact ? 0 : px(16), 0, compact ? px(8) : px(16), 0);
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
             if (compact) lp.leftMargin = px(14); else lp.topMargin = px(12);
             inner.addView(t, lp);
@@ -984,7 +1012,7 @@ public class MainActivity extends Activity {
         ring.setStroke(Math.max(2, px(3)), 0xE6FFFFFF);
         card.setOnFocusChangeListener((v, has) -> {
             if (has) focusedKey = key;
-            if (glass) bg.setColor(glassColor(has));
+            if (glass) bg.setColor(tint != 0 ? tintFill(tint, has) : glassColor(has));
             else if (!key.equals(movingKey)) ((FrameLayout) v).setForeground(has ? ring : null);
             v.animate().scaleX(has ? 1.1f : 1f).scaleY(has ? 1.1f : 1f).translationZ(has ? px(26) : 0)
                     .setDuration(140).withLayer().start();
